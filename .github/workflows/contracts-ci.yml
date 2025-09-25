@@ -1,0 +1,42 @@
+name: Contract CI/CD Pipeline
+
+on:
+    push: 
+        branches: [main, develop]
+        paths: 
+            - 'contract/**'
+
+    pull_request:
+        branches: [ main, develop ]
+        paths:
+            - 'contract/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install Stellar CLI
+        run: |
+          curl -s https://get.stellar.org | bash
+
+      - name: Run contract tests
+        run: cargo test --manifest-path ./contract/contract/Cargo.toml
+
+      - name: Build contracts
+        run: cargo build --release --manifest-path ./contract/contract/Cargo.toml
+
+      - name: Deploy to Stellar testnet
+        run: echo "Add Stellar deployment script here"
+        env:
+          STELLAR_SECRET: ${{ secrets.STELLAR_SECRET }}
