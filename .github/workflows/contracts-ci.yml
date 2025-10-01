@@ -30,6 +30,9 @@ jobs:
         run: |
           curl -s https://get.stellar.org | bash
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check --manifest-path ./contract/contract/Cargo.toml
+
       - name: Run contract tests
         run: cargo test --manifest-path ./contract/contract/Cargo.toml
 
