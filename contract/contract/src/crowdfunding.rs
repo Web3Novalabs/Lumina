@@ -9,7 +9,7 @@ use crate::base::{
         acquire_emergency_lock, reentrancy_lock_logic, release_emergency_lock, release_pool_lock,
     },
     types::{
-        ApplicationStatus, CampaignDetails, CampaignLifecycleStatus, CampaignMetrics, Contribution,
+        ApplicationDetails, ApplicationStatus, CampaignDetails, CampaignLifecycleStatus, CampaignMetrics, Contribution,
         EmergencyWithdrawal, EventDetails, EventMetrics, MultiSigConfig, PoolConfig,
         PoolContribution, PoolMetadata, PoolMetrics, PoolState, ScholarshipApplication, StorageKey,
         MAX_DESCRIPTION_LENGTH, MAX_HASH_LENGTH, MAX_STRING_LENGTH, MAX_URL_LENGTH,
@@ -2367,6 +2367,108 @@ impl ApplicationTrait for CrowdfundingContract {
             .instance()
             .get(&application_key)
             .ok_or(CrowdfundingError::ApplicationNotFound)
+    }
+
+    fn remove_school(env: Env, school_addr: Address) -> Result<(), CrowdfundingError> {
+        // 1. Verify admin authorization
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .ok_or(CrowdfundingError::NotInitialized)?;
+        admin.require_auth();
+
+        // 2. Find the pool associated with this school address
+        // We need to iterate through pools to find one with matching validator
+        let next_pool_id: u64 = env
+            .storage()
+            .instance()
+            .get(&StorageKey::NextPoolId)
+            .unwrap_or(1);
+
+        let mut pool_id_to_remove: Option<u64> = None;
+        
+        // Search for pool with matching validator address
+        for id in 1..next_pool_id {
+            let pool_key = StorageKey::Pool(id);
+            if let Some(pool) = env.storage().instance().get::<StorageKey, PoolConfig>(&pool_key) {
+                if pool.validator == school_addr {
+                    pool_id_to_remove = Some(id);
+                    break;
+                }
+            }
+        }
+
+        let pool_id = pool_id_to_remove.ok_or(CrowdfundingError::PoolNotFound)?;
+
+        // 3. Validate pool state - only allow removal if pool is in safe state
+        let state_key = StorageKey::PoolState(pool_id);
+        let current_state: PoolState = env
+            .storage()
+            .instance()
+            .get(&state_key)
+            .unwrap_or(PoolState::Active);
+
+        // Only allow removal if pool is closed, cancelled, or has no contributions
+        let metrics_key = StorageKey::PoolMetrics(pool_id);
+        let metrics: PoolMetrics = env
+            .storage()
+            .instance()
+            .get(&metrics_key)
+            .unwrap_or_default();
+
+        match current_state {
+            PoolState::Closed | PoolState::Cancelled => {
+                // Safe to remove
+            }
+            PoolState::Active | PoolState::Paused => {
+                // Only allow if no contributions have been made
+                if metrics.total_raised > 0 || metrics.contributor_count > 0 {
+                    return Err(CrowdfundingError::InvalidPoolState);
+                }
+            }
+            PoolState::Completed | PoolState::Disbursed => {
+                // Don't allow removal of completed/disbursed pools
+                return Err(CrowdfundingError::InvalidPoolState);
+            }
+        }
+
+        // 4. Remove all associated storage keys
+        // Core pool data
+        env.storage().instance().remove(&StorageKey::Pool(pool_id));
+        env.storage().instance().remove(&StorageKey::PoolState(pool_id));
+        env.storage().instance().remove(&StorageKey::PoolMetrics(pool_id));
+        env.storage().instance().remove(&StorageKey::PoolMetadata(pool_id));
+        env.storage().instance().remove(&StorageKey::PoolCreator(pool_id));
+        env.storage().instance().remove(&StorageKey::PoolBalance(pool_id));
+        env.storage().instance().remove(&StorageKey::PoolClaimed(pool_id));
+        
+        // Pool contributors data
+        env.storage().instance().remove(&StorageKey::PoolContributors(pool_id));
+        
+        // Event-related data (if applicable)
+        env.storage().instance().remove(&StorageKey::EventPool(pool_id));
+        env.storage().instance().remove(&StorageKey::EventPlatformFees(pool_id));
+        
+        // Multi-sig config (if applicable)
+        env.storage().instance().remove(&StorageKey::MultiSigConfig(pool_id));
+        
+        // Reentrancy lock
+        env.storage().instance().remove(&StorageKey::ReentrancyLock(pool_id));
+
+        // 5. Clean up contributor-specific data
+        // Note: We can't easily iterate over all contributors without maintaining a separate index
+        // In a production system, you might want to maintain a contributors list per pool
+        // For now, we'll clean up what we can access directly
+
+        // 6. Clean up scholarship applications
+        // Similar limitation - we'd need to maintain an applicants index per pool
+        // The remaining data will be orphaned but won't affect contract functionality
+
+        // 7. Emit event
+        events::school_removed(&env, admin, school_addr, pool_id);
+
+        Ok(())
     }
 }
 

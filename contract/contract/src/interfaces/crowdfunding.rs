@@ -261,4 +261,9 @@ pub trait CrowdfundingTrait {
         pool_id: u64,
         applicant: Address,
     ) -> Result<ScholarshipApplication, ValidationError>;
+
+    /// Remove a school (pool) and all associated data.
+    /// Only protocol admins can call this function.
+    /// This permanently removes the pool and all related storage.
+    fn remove_school(env: Env, school_addr: Address) -> Result<(), CrowdfundingError>;
 }

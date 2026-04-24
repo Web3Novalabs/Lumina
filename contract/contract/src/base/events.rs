@@ -233,3 +233,8 @@ pub fn application_submitted(env: &Env, pool_id: u64, student: Address, requeste
     let topics = (symbol_short!("AppSub"), pool_id, student);
     env.events().publish(topics, requested_amount);
 }
+
+pub fn school_removed(env: &Env, admin: Address, school_addr: Address, pool_id: u64) {
+    let topics = (Symbol::new(env, "school_removed"), admin, school_addr);
+    env.events().publish(topics, pool_id);
+}
