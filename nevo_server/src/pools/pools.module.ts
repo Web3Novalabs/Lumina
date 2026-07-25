@@ -4,9 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { Pool } from './pool.entity';
 import { PoolsService } from './pools.service';
 import { PoolsController } from './pools.controller';
-import { DonationsModule } from '../donations/donations.module';
 import { ContractModule } from '../contract/contract.module';
-import { StellarAuthGuard } from '../auth/stellar-auth.guard';
 
 @Module({
   imports: [
@@ -15,10 +13,9 @@ import { StellarAuthGuard } from '../auth/stellar-auth.guard';
       secret: process.env.JWT_SECRET ?? 'dev-secret',
       signOptions: { expiresIn: '7d' },
     }),
-    DonationsModule,
     ContractModule,
   ],
-  providers: [PoolsService, StellarAuthGuard],
+  providers: [PoolsService],
   controllers: [PoolsController],
   exports: [PoolsService],
 })
