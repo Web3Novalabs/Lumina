@@ -1,3 +1,6 @@
+// API response interfaces — these match the shapes returned by the NestJS server.
+// Keep these separate from Zustand store types (src/store/*).
+
 export interface ApiPool {
   id: string;
   contractPoolId: string;
@@ -8,7 +11,7 @@ export interface ApiPool {
   status: string;
   goal: string;
   raised: string;
-  imageUrl: string;
+  imageUrl: string | null;
   raisedOnChain: string;
   donorCount: number;
   createdAt: string;

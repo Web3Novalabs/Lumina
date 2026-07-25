@@ -5,7 +5,7 @@ import { useWalletStore } from '@/src/store/walletStore';
 import { Avatar } from '@/components/Avatar';
 import { Button } from '@/components/Button';
 import { WalletAddress } from '@/components/WalletAddress';
-import { fetchMyProfile, type ApiProfile } from '@/lib/api-client';
+import { fetchMyProfile, type ApiUser } from '@/lib/api-client';
 
 interface UserPreferences {
   email: string;
@@ -33,7 +33,7 @@ export default function ProfilePage() {
   const [preferences, setPreferences] =
     useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [profile, setProfile] = useState<ApiProfile | null>(null);
+  const [profile, setProfile] = useState<ApiUser | null>(null);
 
   useEffect(() => {
     fetchMyProfile()

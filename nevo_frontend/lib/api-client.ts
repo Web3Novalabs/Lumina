@@ -15,8 +15,6 @@ import type {
   PaginatedResponse,
 } from './api-types';
 
-export type { ApiPool, ApiDonation, ApiUser, PaginatedResponse };
-
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 export interface RequestConfig extends Omit<RequestInit, 'method' | 'body'> {
@@ -60,20 +58,6 @@ interface CacheEntry<T> {
 
 const DEFAULT_CACHE_TTL_MS = 15_000;
 const DEFAULT_RATE_LIMIT_KEY = 'api';
-const AUTH_ENDPOINTS = ['/auth/challenge', '/auth/verify'];
-
-export function clearJwt() {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('jwt');
-  }
-}
-
-function getJwt(): string | null {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('jwt');
-  }
-  return null;
-}
 
 export class ApiClient {
   private baseURL: string;
@@ -119,6 +103,10 @@ export class ApiClient {
     this.loadingListeners.forEach((listener) => listener(isLoading));
   }
 
+  /**
+   * Subscribe to global loading state changes.
+   * Returns an unsubscribe function.
+   */
   public subscribeToLoading(
     listener: (isLoading: boolean) => void
   ): () => void {
@@ -129,10 +117,14 @@ export class ApiClient {
     };
   }
 
+  /**
+   * Check if there are any active requests.
+   */
   public get isLoading(): boolean {
     return this.activeRequests > 0;
   }
 
+  // Interceptors
   addRequestInterceptor(interceptor: Interceptor<PreparedRequestConfig>) {
     this.requestInterceptors.push(interceptor);
   }
@@ -306,18 +298,7 @@ export class ApiClient {
     return retryDelay * 2 ** Math.max(0, attempt - 1);
   }
 
-  private handle401(endpoint: string) {
-    if (AUTH_ENDPOINTS.some((e) => endpoint.startsWith(e))) return;
-    clearJwt();
-    // Lazy-import to avoid circular deps and server-side issues
-    if (typeof window !== 'undefined') {
-      import('@/src/store/walletStore').then(({ useWalletStore }) => {
-        useWalletStore.getState().disconnectWallet();
-      });
-      window.location.href = '/login';
-    }
-  }
-
+  // Core request method
   async request<T>(
     endpoint: string,
     method: HttpMethod,
@@ -336,6 +317,7 @@ export class ApiClient {
 
       let requestConfig = this.buildRequestConfig(endpoint, method, config);
 
+      // Apply request interceptors
       requestConfig = await this.applyRequestInterceptors(requestConfig);
 
       const shouldCache = method === 'GET' && cacheResponse;
@@ -370,12 +352,8 @@ export class ApiClient {
           let response = await fetch(requestConfig.url, fetchInit);
           clearTimeout(timeoutId);
 
+          // Apply response interceptors
           response = await this.applyResponseInterceptors(response);
-
-          if (response.status === 401) {
-            this.handle401(endpoint);
-            throw new ApiError(401, 'Unauthorized');
-          }
 
           if (response.status === 429) {
             const rateLimitError = this.createServerRateLimitError(
@@ -398,6 +376,7 @@ export class ApiClient {
             throw new ApiError(response.status, response.statusText, errorData);
           }
 
+          // Handle 204 No Content
           if (response.status === 204) {
             return {} as T;
           }
@@ -425,6 +404,7 @@ export class ApiClient {
             finalError = new Error(`Request timed out after ${timeout}ms`);
           }
 
+          // Don't retry on client errors (4xx) except 429 Too Many Requests
           if (
             finalError instanceof ApiError &&
             finalError.status >= 400 &&
@@ -438,6 +418,7 @@ export class ApiClient {
             throw finalError;
           }
 
+          // Wait before retrying
           await new Promise((resolve) =>
             setTimeout(resolve, this.getBackoffMs(retryDelay, attempt))
           );
@@ -450,6 +431,7 @@ export class ApiClient {
     }
   }
 
+  // Convenience methods
   get<T>(endpoint: string, config?: Omit<RequestConfig, 'body'>) {
     return this.request<T>(endpoint, 'GET', config);
   }
@@ -473,34 +455,111 @@ export {
   getRateLimitRemainingMs,
   isRateLimitError,
 } from './rate-limit';
+export type {
+  ApiPool,
+  ApiDonation,
+  ApiUser,
+  PaginatedResponse,
+} from './api-types';
 
-// Default auth interceptor: attach JWT if present
+// ─── JWT helpers ────────────────────────────────────────────────────────────
+
+const JWT_KEY = 'nevo_jwt';
+
+export function getJwt(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(JWT_KEY);
+}
+
+export function setJwt(token: string): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(JWT_KEY, token);
+  }
+}
+
+export function clearJwt(): void {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(JWT_KEY);
+  }
+}
+
+// ─── Auth request interceptor ────────────────────────────────────────────────
+// Attaches wallet credentials (legacy) and the JWT Bearer token when present.
+
 apiClient.addRequestInterceptor((config) => {
   if (config.requireAuth !== false) {
-    const jwt = getJwt();
+    const signature =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('wallet_signature')
+        : null;
     const pubKey =
       typeof window !== 'undefined'
         ? localStorage.getItem('wallet_pubkey')
         : null;
+    const jwt = getJwt();
 
     const headers = new Headers(config.headers);
+    if (signature && pubKey) {
+      headers.set('X-Wallet-Signature', signature);
+      headers.set('X-Wallet-Pubkey', pubKey);
+    }
     if (jwt) {
       headers.set('Authorization', `Bearer ${jwt}`);
-    }
-    if (pubKey) {
-      headers.set('X-Wallet-Pubkey', pubKey);
     }
     config.headers = headers;
   }
   return config;
 });
 
-// --- API helper functions ---
+// ─── 401 response interceptor ────────────────────────────────────────────────
+// On any 401 outside the auth endpoints themselves, clear the JWT, disconnect
+// the wallet, and redirect to /login.
 
-export interface ApiProfile {
-  publicKey: string;
-  displayName: string | null;
-  createdAt: string;
+const AUTH_ENDPOINTS = ['/auth/challenge', '/auth/verify'];
+
+apiClient.addResponseInterceptor((response) => {
+  if (response.status === 401) {
+    const url = response.url ?? '';
+    const isAuthEndpoint = AUTH_ENDPOINTS.some((ep) => url.includes(ep));
+
+    if (!isAuthEndpoint) {
+      clearJwt();
+
+      if (typeof window !== 'undefined') {
+        // Lazy-import the wallet store to avoid a circular dependency at module
+        // load time. The store is always available by the time a 401 fires.
+        import('@/src/store/walletStore')
+          .then(({ useWalletStore }) => {
+            return useWalletStore.getState().disconnectWallet();
+          })
+          .catch(() => {
+            // Best-effort — still redirect even if disconnect fails.
+          })
+          .finally(() => {
+            window.location.href = '/login';
+          });
+      }
+    }
+  }
+  return response;
+});
+
+// ─── API call functions ──────────────────────────────────────────────────────
+
+export interface CreatePoolPayload {
+  title: string;
+  description: string;
+  category: string;
+  goal?: string;
+  goalAmount?: string;
+  imageUrl?: string;
+  duration?: number;
+  tags?: string;
+}
+
+export interface CreatePoolResponse {
+  poolId: number;
+  unsignedXdr: string;
 }
 
 export function fetchMyDonations(): Promise<ApiDonation[]> {
@@ -511,17 +570,20 @@ export function fetchMyProfile(): Promise<ApiUser> {
   return apiClient.get<ApiUser>('/users/me');
 }
 
-export interface CreatePoolPayload {
-  title: string;
-  description: string;
-  category: string;
-  goal: string;
-  imageUrl?: string;
+export function fetchCreatorPools(publicKey: string): Promise<ApiPool[]> {
+  return apiClient.get<ApiPool[]>(
+    `/pools?creator=${encodeURIComponent(publicKey)}`
+  );
 }
 
-export interface CreatePoolResponse {
-  poolId: number;
-  unsignedXdr: string;
+export function fetchPools(
+  params?: Record<string, string | number | boolean | undefined>
+): Promise<PaginatedResponse<ApiPool>> {
+  return apiClient.get<PaginatedResponse<ApiPool>>('/pools', { params });
+}
+
+export function fetchPool(id: string | number): Promise<ApiPool> {
+  return apiClient.get<ApiPool>(`/pools/${id}`);
 }
 
 export function createPool(
@@ -530,12 +592,6 @@ export function createPool(
   return apiClient.post<CreatePoolResponse>('/pools', payload, {
     requireAuth: true,
   });
-}
-
-export function fetchCreatorPools(publicKey: string): Promise<ApiPool[]> {
-  return apiClient.get<ApiPool[]>(
-    `/pools?creator=${encodeURIComponent(publicKey)}`
-  );
 }
 
 export function closePool(

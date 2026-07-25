@@ -126,6 +126,7 @@ export function DonateModal({ pool, onClose }: DonateModalProps) {
         status: 'confirmed' as const,
       };
       addDonation(donation);
+      setLastTxHash(hash);
       setTxHash(hash);
       setLastTxHash(hash);
       setStep('success');

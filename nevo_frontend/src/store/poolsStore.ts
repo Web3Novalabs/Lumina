@@ -38,7 +38,9 @@ interface PoolsState {
   currentPool: Pool | null;
   setPools: (pools: Pool[]) => void;
   setLoading: (loading: boolean) => void;
-  fetchPools: (params?: Record<string, unknown>) => Promise<void>;
+  fetchPools: (
+    params?: Record<string, string | number | boolean | undefined>
+  ) => Promise<void>;
   fetchPool: (id: number) => Promise<Pool | null>;
   setSearch: (search: string) => void;
   toggleCategory: (category: string) => void;
@@ -138,7 +140,9 @@ export const usePoolsStore = create<PoolsState>()(
       setPools: (pools) => set({ pools }),
       setLoading: (loading) => set({ loading }),
 
-      fetchPools: async (params?: Record<string, unknown>) => {
+      fetchPools: async (
+        params?: Record<string, string | number | boolean | undefined>
+      ) => {
         set({ loading: true, error: null });
         try {
           const data = await apiClient.get<Pool[]>('/pools', { params });

@@ -286,7 +286,12 @@ export default function BrowsePoolsPage() {
 
   useEffect(() => {
     if (hasFetched.current) {
-      fetchPools(filters);
+      fetchPools(
+        filters as unknown as Record<
+          string,
+          string | number | boolean | undefined
+        >
+      );
     } else {
       hasFetched.current = true;
     }
