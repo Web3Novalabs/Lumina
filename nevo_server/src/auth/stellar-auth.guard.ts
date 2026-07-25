@@ -9,8 +9,7 @@ import { Request } from 'express';
 import { getJwtSecret } from './jwt.config.js';
 
 @Injectable()
-export class StellarAuthGuard implements CanActivate {
-  private readonly jwtService = new JwtService();
+export class StellarAuthGuard extends JwtAuthGuard {}
 
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest<Request>();

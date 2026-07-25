@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { StellarAuthGuard } from '../auth/stellar-auth.guard.js';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { DonationSortBy, DonationsService } from './donations.service.js';
 import { GetDonationsDto } from './dto/get-donations.dto.js';
 
@@ -24,7 +24,7 @@ export class DonationsController {
     return this.donationsService.findByPool(id, sort, query.page, query.limit);
   }
 
-  @UseGuards(StellarAuthGuard)
+  @UseGuards(JwtAuthGuard)
   @Get('users/me/donations')
   findMyDonations(
     @Req() req: Request & { user: { publicKey: string } },
