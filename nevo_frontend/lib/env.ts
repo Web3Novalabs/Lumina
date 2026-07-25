@@ -3,19 +3,20 @@ const REQUIRED_PUBLIC_ENV_VARS = [
   'NEXT_PUBLIC_STELLAR_NETWORK',
 ] as const;
 
+const DEFAULT_PUBLIC_ENV_VARS = {
+  NEXT_PUBLIC_API_BASE_URL: 'http://localhost:3000',
+  NEXT_PUBLIC_STELLAR_NETWORK: 'testnet',
+} as const;
+
 type RequiredPublicEnvVar = (typeof REQUIRED_PUBLIC_ENV_VARS)[number];
 
-const PUBLIC_ENV_FALLBACKS: Record<RequiredPublicEnvVar, string> = {
+const DEFAULT_PUBLIC_ENV_VALUES: Record<RequiredPublicEnvVar, string> = {
   NEXT_PUBLIC_API_BASE_URL: 'http://localhost:3000',
   NEXT_PUBLIC_STELLAR_NETWORK: 'testnet',
 };
 
 function getPublicEnvVar(name: RequiredPublicEnvVar): string {
-  const value = process.env[name];
-  if (value) {
-    return value;
-  }
-  return PUBLIC_ENV_FALLBACKS[name];
+  return process.env[name] || DEFAULT_PUBLIC_ENV_VALUES[name];
 }
 
 export function validatePublicEnv(): void {
