@@ -16,9 +16,7 @@ import type { Request } from 'express';
 import { PoolsService } from './pools.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { GetPoolsDto } from './dto/get-pools.dto.js';
-import { DonationsService } from '../donations/donations.service.js';
 import { ContractService } from '../contract/contract.service.js';
-import { StellarAuthGuard } from '../auth/stellar-auth.guard.js';
 import { CreatePoolDto } from './dto/create-pool.dto.js';
 import { DonatePoolDto } from './dto/donate-pool.dto.js';
 
@@ -46,7 +44,6 @@ export class PoolsController {
   constructor(
     private readonly poolsService: PoolsService,
     private readonly contractService: ContractService,
-    private readonly donationsService: DonationsService,
   ) {}
 
   @Get(':id')
@@ -108,7 +105,7 @@ export class PoolsController {
     return this.poolsService.buildClosePoolTx(pool);
   }
 
-  @UseGuards(StellarAuthGuard)
+  @UseGuards(JwtAuthGuard)
   @Post(':id/donate')
   async donate(
     @Param('id', ParseIntPipe) id: number,
