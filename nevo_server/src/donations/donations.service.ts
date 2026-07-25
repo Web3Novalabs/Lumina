@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Donation } from './donation.entity.js';
 
-export type DonationSortBy = 'newest' | 'largest';
+export enum DonationSortBy {
+  newest = 'newest',
+  largest = 'largest',
+}
 
 @Injectable()
 export class DonationsService {
