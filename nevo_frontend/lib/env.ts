@@ -5,23 +5,26 @@ const REQUIRED_PUBLIC_ENV_VARS = [
 
 type RequiredPublicEnvVar = (typeof REQUIRED_PUBLIC_ENV_VARS)[number];
 
-function getRequiredPublicEnvVar(name: RequiredPublicEnvVar): string {
+const PUBLIC_ENV_FALLBACKS: Record<RequiredPublicEnvVar, string> = {
+  NEXT_PUBLIC_API_BASE_URL: 'http://localhost:3000',
+  NEXT_PUBLIC_STELLAR_NETWORK: 'testnet',
+};
+
+function getPublicEnvVar(name: RequiredPublicEnvVar): string {
   const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required env var: ${name}`);
+  if (value) {
+    return value;
   }
-  return value;
+  return PUBLIC_ENV_FALLBACKS[name];
 }
 
 export function validatePublicEnv(): void {
   REQUIRED_PUBLIC_ENV_VARS.forEach((name) => {
-    getRequiredPublicEnvVar(name);
+    getPublicEnvVar(name);
   });
 }
 
 export const env = {
-  NEXT_PUBLIC_API_BASE_URL: getRequiredPublicEnvVar('NEXT_PUBLIC_API_BASE_URL'),
-  NEXT_PUBLIC_STELLAR_NETWORK: getRequiredPublicEnvVar(
-    'NEXT_PUBLIC_STELLAR_NETWORK'
-  ),
+  NEXT_PUBLIC_API_BASE_URL: getPublicEnvVar('NEXT_PUBLIC_API_BASE_URL'),
+  NEXT_PUBLIC_STELLAR_NETWORK: getPublicEnvVar('NEXT_PUBLIC_STELLAR_NETWORK'),
 } as const;
