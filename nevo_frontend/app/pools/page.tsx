@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { Pagination, PoolCard, Skeleton } from '@/components';
+import { BackToTopButton, Pagination, PoolCard, Skeleton } from '@/components';
 import {
   usePoolsStore,
   type Pool,
@@ -745,9 +745,12 @@ function BrowsePoolsPageContent() {
 
 export default function BrowsePoolsPage() {
   return (
-    <ErrorBoundary>
-      <BrowsePoolsPageContent />
-    </ErrorBoundary>
+    <>
+      <ErrorBoundary>
+        <BrowsePoolsPageContent />
+      </ErrorBoundary>
+      <BackToTopButton />
+    </>
   );
 }
 
