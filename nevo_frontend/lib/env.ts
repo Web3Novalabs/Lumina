@@ -3,6 +3,11 @@ const REQUIRED_PUBLIC_ENV_VARS = [
   'NEXT_PUBLIC_STELLAR_NETWORK',
 ] as const;
 
+const DEFAULT_PUBLIC_ENV_VARS = {
+  NEXT_PUBLIC_API_BASE_URL: 'http://localhost:3000',
+  NEXT_PUBLIC_STELLAR_NETWORK: 'testnet',
+} as const;
+
 type RequiredPublicEnvVar = (typeof REQUIRED_PUBLIC_ENV_VARS)[number];
 
 const DEFAULT_PUBLIC_ENV_VALUES: Record<RequiredPublicEnvVar, string> = {
