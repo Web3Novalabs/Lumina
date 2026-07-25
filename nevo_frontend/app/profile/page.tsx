@@ -179,6 +179,8 @@ export default function ProfilePage() {
                 {isLoading ? (
                   <div className="h-5 w-40 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mx-auto" />
                 ) : (
+                  // Copy-to-clipboard for the public key is already provided
+                  // by WalletAddress itself (see #883) — don't add a second one.
                   <WalletAddress address={publicKey || ''} />
                 )}
               </div>
