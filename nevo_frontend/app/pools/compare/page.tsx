@@ -103,7 +103,7 @@ export default function PoolComparePage() {
 
   if (!isComparing && selectedPools.length === 0) {
     return (
-      <div className="min-h-screen bg-[var(--color-background)]">
+      <main className="min-h-screen bg-[var(--color-background)]">
         <div className="container mx-auto px-4 py-12">
           {/* Header */}
           <div className="mb-12">
@@ -240,13 +240,13 @@ export default function PoolComparePage() {
             )}
           </div>
         </div>
-      </div>
+      </main>
     );
   }
 
   // Comparison View
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
+    <main className="min-h-screen bg-[var(--color-background)]">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
@@ -701,6 +701,6 @@ export default function PoolComparePage() {
           </Link>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

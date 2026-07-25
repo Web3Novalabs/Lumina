@@ -58,6 +58,17 @@ export class PoolsController {
     return this.poolsService.findAll(query);
   }
 
+  @Get(':id/donations')
+  getDonations(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('sortBy') sortBy?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const sort = sortBy === 'largest' ? 'largest' : 'newest';
+    return this.donationsService.findByPool(String(id), sort, page, limit);
+  }
+
   @Post()
   create(@Body() dto: CreatePoolDto) {
     return this.poolsService.create(dto);
