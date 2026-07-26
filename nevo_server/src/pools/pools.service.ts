@@ -21,6 +21,16 @@ export class PoolsService {
     private readonly contractService: ContractService,
   ) {}
 
+  /**
+   * Creates or updates the local record of a pool observed on-chain.
+   *
+   * An existing pool (matched on `contractPoolId`) has its creator and goal
+   * refreshed; off-chain metadata such as title, description and image is left
+   * untouched. A pool seen for the first time is inserted with empty metadata
+   * and zero raised, ready to be filled in later.
+   * @param data Pool fields read from the contract.
+   * @returns The saved pool entity.
+   */
   async upsertFromChain(data: ChainPoolData): Promise<Pool> {
     const existing = await this.poolRepo.findOne({
       where: { contractPoolId: data.contractPoolId },
@@ -125,6 +135,16 @@ export class PoolsService {
     return this.poolRepo.findOne({ where: { contractPoolId } });
   }
 
+  /**
+   * Loads a pool and merges its stored metadata with live on-chain state.
+   *
+   * The contract is queried for the amount raised, whether the pool is closed
+   * and the donor count; those are returned alongside the stored fields as
+   * `raisedOnChain`, `closedOnChain` and `donorCount`. If the id is not numeric
+   * the on-chain lookups are skipped and those fields keep their defaults.
+   * @param contractPoolId The pool's on-chain id.
+   * @returns The merged pool, or null if no such pool is stored locally.
+   */
   async findOneMerged(contractPoolId: string) {
     const pool = await this.poolRepo.findOne({ where: { contractPoolId } });
     if (!pool) return null;

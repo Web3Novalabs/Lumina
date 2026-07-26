@@ -15,6 +15,16 @@ export class DonationsService {
     private readonly donationRepo: Repository<Donation>,
   ) {}
 
+  /**
+   * Lists the donations recorded against a single pool.
+   * @param poolId The pool to list donations for.
+   * @param sortBy `newest` orders by creation date descending (the default);
+   *   `largest` orders by donation amount descending.
+   * @param page 1-based page number. Pagination is applied only when `page` or
+   *   `limit` is supplied, and defaults to page 1.
+   * @param limit Page size, clamped to 1-100 and defaulting to 10.
+   * @returns The matching donations.
+   */
   async findByPool(
     poolId: string,
     sortBy: DonationSortBy = DonationSortBy.newest,
