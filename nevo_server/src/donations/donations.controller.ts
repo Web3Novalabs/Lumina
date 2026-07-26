@@ -20,7 +20,10 @@ export class DonationsController {
 
   @Get('pools/:id/donations')
   findByPool(@Param('id') id: string, @Query() query: GetDonationsDto) {
-    const sort: DonationSortBy = query.sortBy === 'largest' ? 'largest' : 'newest';
+    const sort =
+      query.sortBy === 'largest'
+        ? DonationSortBy.largest
+        : DonationSortBy.newest;
     return this.donationsService.findByPool(id, sort, query.page, query.limit);
   }
 
@@ -30,7 +33,15 @@ export class DonationsController {
     @Req() req: Request & { user: { publicKey: string } },
     @Query() query: GetDonationsDto,
   ) {
-    const sort: DonationSortBy = query.sortBy === 'largest' ? 'largest' : 'newest';
-    return this.donationsService.findByDonor(req.user.publicKey, sort, query.page, query.limit);
+    const sort =
+      query.sortBy === 'largest'
+        ? DonationSortBy.largest
+        : DonationSortBy.newest;
+    return this.donationsService.findByDonor(
+      req.user.publicKey,
+      sort,
+      query.page,
+      query.limit,
+    );
   }
 }
