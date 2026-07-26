@@ -15,26 +15,13 @@ import {
 import type { Request } from 'express';
 import { PoolsService } from './pools.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
-import { GetPoolsDto } from './dto/get-pools.dto.js';
 import { DonationsService } from '../donations/donations.service.js';
 import { ContractService } from '../contract/contract.service.js';
 import { StellarAuthGuard } from '../auth/stellar-auth.guard.js';
 import { CreatePoolDto } from './dto/create-pool.dto.js';
 import { DonatePoolDto } from './dto/donate-pool.dto.js';
-
-export interface UpdatePoolDto {
-  description?: string;
-  imageUrl?: string;
-  category?: string;
-}
-
-export interface WithdrawDto {
-  requesterWallet: string;
-}
-
-export interface ClosePoolDto {
-  requesterWallet: string;
-}
+import { FilterPoolsDto } from './dto/filter-pools.dto.js';
+import { UpdatePoolDto } from './dto/update-pool.dto.js';
 
 interface JwtPayload {
   sub: string;
@@ -57,7 +44,7 @@ export class PoolsController {
   }
 
   @Get()
-  async findAll(@Query() query: GetPoolsDto) {
+  async findAll(@Query() query: FilterPoolsDto) {
     return this.poolsService.findAll(query);
   }
 
@@ -78,11 +65,15 @@ export class PoolsController {
     return pool;
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post(':id/withdraw')
-  async withdraw(@Param('id') id: string, @Body() dto: WithdrawDto) {
+  async withdraw(
+    @Param('id') id: string,
+    @Req() req: { user: { publicKey: string } },
+  ) {
     const pool = await this.poolsService.findByContractId(id);
     if (!pool) throw new NotFoundException('Pool not found');
-    if (pool.creatorWallet !== dto.requesterWallet) {
+    if (pool.creatorWallet !== req.user.publicKey) {
       throw new ForbiddenException('Only the pool creator may withdraw');
     }
     return this.poolsService.buildWithdrawTx(pool);

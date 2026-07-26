@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   NotFoundException,
@@ -10,10 +9,7 @@ import {
 import type { Request } from 'express';
 import { StellarAuthGuard } from '../auth/stellar-auth.guard.js';
 import { UsersService } from './users.service.js';
-
-export interface UpdateDisplayNameDto {
-  displayName: string;
-}
+import { UpdateDisplayNameDto } from './dto/update-display-name.dto.js';
 
 @Controller('users')
 export class UsersController {
@@ -25,13 +21,9 @@ export class UsersController {
     @Req() req: Request & { user: { publicKey: string } },
     @Body() dto: UpdateDisplayNameDto,
   ) {
-    if (!dto.displayName || dto.displayName.length > 50) {
-      throw new BadRequestException('displayName must be 1–50 characters');
-    }
-
     const user = await this.usersService.updateDisplayName(
       req.user.publicKey,
-      dto.displayName,
+      dto.displayName.trim(),
     );
     if (!user) throw new NotFoundException('User not found');
     return user;
