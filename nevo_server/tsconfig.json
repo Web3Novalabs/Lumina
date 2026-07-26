@@ -1,4 +1,11 @@
 {
+  "ts-node": {
+    // The sources use ESM-style ".js" import specifiers, which ts-node cannot
+    // resolve to their ".ts" files without this. Without it every migration:*
+    // script dies on "Cannot find module './donations/donation.entity.js'"
+    // before it ever reaches the database.
+    "experimentalResolver": true
+  },
   "compilerOptions": {
     "module": "nodenext",
     "moduleResolution": "nodenext",

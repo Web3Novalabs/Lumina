@@ -9,12 +9,7 @@ import { UsersService } from '../users/users.service';
 import { User } from '../users/user.entity';
 import { randomBytes } from 'crypto';
 import { NonceService } from './nonce.service';
-
-export interface VerifyDto {
-  publicKey: string;
-  signature: string;
-  message: string;
-}
+import { VerifyAuthDto } from './dto/verify-auth.dto';
 
 export interface AuthResult {
   accessToken: string;
@@ -62,7 +57,7 @@ export class AuthService {
     return { nonce, expiresAt };
   }
 
-  async verify(dto: VerifyDto): Promise<AuthResult> {
+  async verify(dto: VerifyAuthDto): Promise<AuthResult> {
     if (!this.verifySignature(dto.publicKey, dto.signature, dto.message)) {
       throw new UnauthorizedException('Invalid signature');
     }
