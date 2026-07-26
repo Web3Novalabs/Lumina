@@ -13,7 +13,9 @@ export class GetPoolsDto {
   })
   search?: string;
 
-  @ApiPropertyOptional({ description: 'Exact category match, case-insensitive.' })
+  @ApiPropertyOptional({
+    description: 'Exact category match, case-insensitive.',
+  })
   category?: string;
 
   @ApiPropertyOptional({
