@@ -17,7 +17,7 @@ export class DonationsService {
 
   async findByPool(
     poolId: string,
-    sortBy: DonationSortBy = 'newest',
+    sortBy: DonationSortBy = DonationSortBy.newest,
     page?: number | string,
     limit?: number | string,
   ): Promise<Donation[]> {
@@ -27,7 +27,7 @@ export class DonationsService {
         ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
         : undefined;
 
-    if (sortBy === 'largest') {
+    if (sortBy === DonationSortBy.largest) {
       const qb = this.donationRepo
         .createQueryBuilder('d')
         .where('d.poolId = :poolId', { poolId })
@@ -58,7 +58,7 @@ export class DonationsService {
 
   async findByDonor(
     donorWallet: string,
-    sortBy: DonationSortBy = 'newest',
+    sortBy: DonationSortBy = DonationSortBy.newest,
     page?: number | string,
     limit?: number | string,
   ): Promise<Donation[]> {
@@ -68,7 +68,7 @@ export class DonationsService {
         ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
         : undefined;
 
-    if (sortBy === 'largest') {
+    if (sortBy === DonationSortBy.largest) {
       const qb = this.donationRepo
         .createQueryBuilder('d')
         .where('d.donorWallet = :donorWallet', { donorWallet })
