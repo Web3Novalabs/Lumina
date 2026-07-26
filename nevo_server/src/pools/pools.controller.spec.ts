@@ -31,10 +31,6 @@ describe('PoolsController', () => {
           },
         },
         {
-          provide: DonationsService,
-          useValue: {},
-        },
-        {
           provide: ContractService,
           useValue: {},
         },
