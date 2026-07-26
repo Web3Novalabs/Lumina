@@ -12,6 +12,17 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiCreatedResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { Request } from 'express';
 import { PoolsService } from './pools.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
@@ -39,6 +50,7 @@ interface JwtPayload {
   publicKey: string;
 }
 
+@ApiTags('pools')
 @Controller('pools')
 export class PoolsController {
   constructor(
@@ -46,6 +58,15 @@ export class PoolsController {
     private readonly contractService: ContractService,
   ) {}
 
+  @ApiOperation({
+    summary: 'Get a single pool',
+    description:
+      'Returns the stored pool merged with live on-chain state ' +
+      '(raisedOnChain, closedOnChain, donorCount).',
+  })
+  @ApiParam({ name: 'id', description: 'On-chain pool id.' })
+  @ApiOkResponse({ description: 'The pool, including on-chain state.' })
+  @ApiNotFoundResponse({ description: 'No pool with that id.' })
   @Get(':id')
   async findOne(@Param('id') id: string) {
     const pool = await this.poolsService.findOneMerged(id);
@@ -53,16 +74,59 @@ export class PoolsController {
     return pool;
   }
 
+  @ApiOperation({
+    summary: 'List pools',
+    description:
+      'Paginated list of pools, newest first. Optionally filtered by ' +
+      'category, status or a free-text search over title and description.',
+  })
+  @ApiOkResponse({
+    description: 'Paginated pools.',
+    schema: {
+      type: 'object',
+      properties: {
+        data: { type: 'array', items: { type: 'object' } },
+        total: { type: 'integer' },
+        page: { type: 'integer' },
+        limit: { type: 'integer' },
+      },
+    },
+  })
   @Get()
   async findAll(@Query() query: GetPoolsDto) {
     return this.poolsService.findAll(query);
   }
 
+  @ApiOperation({
+    summary: 'Create a pool record',
+    description:
+      'Stores the off-chain record for a pool that already exists on-chain.',
+  })
+  @ApiCreatedResponse({ description: 'The created pool.' })
   @Post()
   create(@Body() dto: CreatePoolDto) {
     return this.poolsService.create(dto);
   }
 
+  @ApiOperation({
+    summary: 'Update off-chain pool metadata',
+    description:
+      'Updates description, image and category. On-chain fields such as the ' +
+      'goal and creator cannot be changed here.',
+  })
+  @ApiParam({ name: 'id', description: 'On-chain pool id.' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        imageUrl: { type: 'string' },
+        category: { type: 'string' },
+      },
+    },
+  })
+  @ApiOkResponse({ description: 'The updated pool.' })
+  @ApiNotFoundResponse({ description: 'No pool with that id.' })
   @Patch(':id')
   async updateMeta(@Param('id') id: string, @Body() dto: UpdatePoolDto) {
     const pool = await this.poolsService.updateMeta(id, dto);
@@ -70,6 +134,37 @@ export class PoolsController {
     return pool;
   }
 
+  @ApiOperation({
+    summary: 'Build a withdrawal transaction',
+    description:
+      'Returns an unsigned XDR withdrawing the pool balance. Only the pool ' +
+      'creator may withdraw.',
+  })
+  @ApiParam({ name: 'id', description: 'On-chain pool id.' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['requesterWallet'],
+      properties: {
+        requesterWallet: {
+          type: 'string',
+          description: 'Wallet requesting the withdrawal; must be the creator.',
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned transaction for the wallet to sign and submit.',
+    schema: {
+      type: 'object',
+      properties: {
+        unsignedXdr: { type: 'string' },
+        poolId: { type: 'string' },
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'No pool with that id.' })
+  @ApiForbiddenResponse({ description: 'Requester is not the pool creator.' })
   @Post(':id/withdraw')
   async withdraw(@Param('id') id: string, @Body() dto: WithdrawDto) {
     const pool = await this.poolsService.findByContractId(id);
@@ -80,6 +175,25 @@ export class PoolsController {
     return this.poolsService.buildWithdrawTx(pool);
   }
 
+  @ApiOperation({
+    summary: 'Build a close-pool transaction',
+    description:
+      'Returns an unsigned XDR closing the pool. Only the authenticated pool ' +
+      'creator may close it.',
+  })
+  @ApiBearerAuth('bearer')
+  @ApiParam({ name: 'id', description: 'On-chain pool id.' })
+  @ApiOkResponse({
+    description: 'Unsigned transaction for the creator to sign and submit.',
+    schema: {
+      type: 'object',
+      properties: { unsignedXdr: { type: 'string' } },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'No pool with that id.' })
+  @ApiForbiddenResponse({
+    description: 'Authenticated wallet is not the pool creator.',
+  })
   @UseGuards(JwtAuthGuard)
   @Post(':id/close')
   async close(
@@ -94,6 +208,22 @@ export class PoolsController {
     return this.poolsService.buildClosePoolTx(pool);
   }
 
+  @ApiOperation({
+    summary: 'Build a donation transaction',
+    description:
+      'Returns an unsigned XDR donating to the pool from the authenticated ' +
+      "wallet. The server never signs; the caller submits it with the wallet's key.",
+  })
+  @ApiBearerAuth('bearer')
+  @ApiParam({ name: 'id', description: 'On-chain pool id (numeric).' })
+  @ApiOkResponse({
+    description: 'Unsigned transaction for the donor to sign and submit.',
+    schema: {
+      type: 'object',
+      properties: { unsignedXdr: { type: 'string' } },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'No pool with that id.' })
   @UseGuards(JwtAuthGuard)
   @Post(':id/donate')
   async donate(
