@@ -45,6 +45,19 @@ function extractFromPayload(payload: unknown): string | undefined {
   return extractString(record.message) ?? extractString(record.error);
 }
 
+/**
+ * Extracts a human-readable message from an error of unknown shape.
+ *
+ * **Precedence order** (first match wins):
+ * 1. Axios-shaped error (`err.response.data.message` or `.error`)
+ * 2. `ApiError` instance (`err.data.message` or `.error`)
+ * 3. Standard `Error` instance (`err.message`)
+ * 4. Generic object with a `message` property
+ * 5. Fallback string: `"Something went wrong. Please try again."`
+ *
+ * This order ensures server-provided messages are preferred over generic stack
+ * traces, and structured API errors are preferred over plain `Error` objects.
+ */
 export function parseApiError(err: unknown): string {
   if (isAxiosError(err)) {
     const fromResponse = extractFromPayload(err.response?.data);
