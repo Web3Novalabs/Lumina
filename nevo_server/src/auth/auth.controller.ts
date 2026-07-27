@@ -17,7 +17,8 @@ import {
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { NonceService } from './nonce.service';
-import type { VerifyDto, AuthResult } from './auth.service';
+import type { AuthResult } from './auth.service';
+import { VerifyAuthDto } from './dto/verify-auth.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -96,7 +97,7 @@ export class AuthController {
   })
   @ApiUnauthorizedResponse({ description: 'Signature or nonce is invalid.' })
   @Post('verify')
-  verify(@Body() dto: VerifyDto): Promise<AuthResult> {
+  verify(@Body() dto: VerifyAuthDto): Promise<AuthResult> {
     return this.authService.verify(dto);
   }
 }

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { AuthController } from './auth.controller';
@@ -54,6 +54,15 @@ describe('AuthController (challenge/verify)', () => {
     authService = moduleRef.get<AuthService>(AuthService);
 
     app = moduleRef.createNestApplication();
+    // Mirror the global pipe configured in main.ts so these tests exercise the
+    // same validation the real server applies.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
     await app.init();
   });
 
@@ -130,5 +139,79 @@ describe('AuthController (challenge/verify)', () => {
       .post('/auth/verify')
       .send({ publicKey, signature, message: nonce })
       .expect(401);
+  });
+
+  describe('POST /auth/verify body validation', () => {
+    // Guards against the regression where VerifyDto was an interface: interfaces
+    // are erased at runtime, so the global ValidationPipe skipped this body and
+    // let malformed or extra fields through to the service untouched.
+    const validSignature = (nonce: string) =>
+      keypair.sign(Buffer.from(nonce)).toString('hex');
+
+    const expectRejected = async (body: Record<string, unknown>) => {
+      const verifySpy = jest.spyOn(authService, 'verify');
+      await request(app.getHttpServer())
+        .post('/auth/verify')
+        .send(body)
+        .expect(400);
+      // The request must not reach the service at all.
+      expect(verifySpy).not.toHaveBeenCalled();
+    };
+
+    it('rejects an empty body', async () => {
+      await expectRejected({});
+    });
+
+    it('rejects a body missing publicKey', async () => {
+      await expectRejected({
+        signature: validSignature('n'),
+        message: 'n',
+      });
+    });
+
+    it('rejects a body missing signature', async () => {
+      await expectRejected({ publicKey, message: 'n' });
+    });
+
+    it('rejects a body missing message', async () => {
+      await expectRejected({ publicKey, signature: validSignature('n') });
+    });
+
+    it('rejects non-string fields', async () => {
+      await expectRejected({ publicKey, signature: 12345, message: 'n' });
+    });
+
+    it('rejects an empty-string message', async () => {
+      await expectRejected({
+        publicKey,
+        signature: validSignature('n'),
+        message: '',
+      });
+    });
+
+    it('rejects a malformed Stellar public key', async () => {
+      await expectRejected({
+        publicKey: 'not-a-stellar-key',
+        signature: validSignature('n'),
+        message: 'n',
+      });
+    });
+
+    it('rejects a non-hex signature', async () => {
+      await expectRejected({
+        publicKey,
+        signature: 'zzzz-not-hex',
+        message: 'n',
+      });
+    });
+
+    it('rejects unknown extra fields (forbidNonWhitelisted)', async () => {
+      await expectRejected({
+        publicKey,
+        signature: validSignature('n'),
+        message: 'n',
+        isAdmin: true,
+      });
+    });
   });
 });
