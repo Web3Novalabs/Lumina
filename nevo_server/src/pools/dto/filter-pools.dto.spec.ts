@@ -2,22 +2,23 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { ContractService } from '../../contract/contract.service';
+import { PoolStatus } from '../pool.entity';
 import { PoolsController } from '../pools.controller';
 import { PoolsService } from '../pools.service';
 
 /**
- * GetPoolsDto's fields only survive the global ValidationPipe because they are
- * decorated. These tests pin that down: without the decorators every filter
- * below is stripped by `whitelist` and then rejected by `forbidNonWhitelisted`.
+ * Pins down the GET /pools query contract as it behaves under the global
+ * ValidationPipe: which filters reach the service, what they are coerced to,
+ * and what is rejected outright.
  */
-describe('GetPoolsDto (GET /pools query contract)', () => {
+describe('FilterPoolsDto (GET /pools query contract)', () => {
   let app: INestApplication;
   let findAll: jest.Mock;
 
   beforeEach(async () => {
     findAll = jest
       .fn()
-      .mockResolvedValue({ data: [], total: 0, page: 1, limit: 10 });
+      .mockResolvedValue({ data: [], total: 0, page: 1, limit: 20 });
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [PoolsController],
@@ -44,9 +45,9 @@ describe('GetPoolsDto (GET /pools query contract)', () => {
     jest.clearAllMocks();
   });
 
-  it('accepts a request with no query parameters', async () => {
+  it('applies the declared defaults when no query parameters are given', async () => {
     await request(app.getHttpServer()).get('/pools').expect(200);
-    expect(findAll).toHaveBeenCalledWith({});
+    expect(findAll).toHaveBeenCalledWith({ page: 1, limit: 20 });
   });
 
   it('passes every documented filter through to the service', async () => {
@@ -57,25 +58,29 @@ describe('GetPoolsDto (GET /pools query contract)', () => {
         limit: '25',
         search: 'clean water',
         category: 'health',
-        status: 'Active',
+        status: PoolStatus.Active,
       })
       .expect(200);
 
     expect(findAll).toHaveBeenCalledWith({
-      page: '2',
-      limit: '25',
+      page: 2,
+      limit: 25,
       search: 'clean water',
       category: 'health',
-      status: 'Active',
+      status: PoolStatus.Active,
     });
   });
 
-  it('accepts a lowercase status', async () => {
+  it('coerces numeric query strings to numbers', async () => {
     await request(app.getHttpServer())
       .get('/pools')
-      .query({ status: 'completed' })
+      .query({ page: '3', limit: '50' })
       .expect(200);
-    expect(findAll).toHaveBeenCalledWith({ status: 'completed' });
+
+    // toHaveBeenCalledWith compares strictly, so 3 here would not match '3'.
+    expect(findAll).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 3, limit: 50 }),
+    );
   });
 
   it('rejects a non-numeric page with 400', async () => {
@@ -86,7 +91,23 @@ describe('GetPoolsDto (GET /pools query contract)', () => {
     expect(findAll).not.toHaveBeenCalled();
   });
 
-  it('rejects an unknown status with 400', async () => {
+  it('rejects page below the declared minimum with 400', async () => {
+    await request(app.getHttpServer())
+      .get('/pools')
+      .query({ page: '0' })
+      .expect(400);
+    expect(findAll).not.toHaveBeenCalled();
+  });
+
+  it('rejects limit above the declared maximum with 400', async () => {
+    await request(app.getHttpServer())
+      .get('/pools')
+      .query({ limit: '101' })
+      .expect(400);
+    expect(findAll).not.toHaveBeenCalled();
+  });
+
+  it('rejects a status outside the PoolStatus enum with 400', async () => {
     await request(app.getHttpServer())
       .get('/pools')
       .query({ status: 'archived' })
