@@ -10,6 +10,7 @@ describe('SyncService', () => {
   const upsertFromChain = jest.fn();
   const markCompleted = jest.fn();
   const isTxProcessed = jest.fn();
+  const syncStateRepo = { findOne: jest.fn(), save: jest.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -17,7 +18,7 @@ describe('SyncService', () => {
         SyncService,
         { provide: PoolsService, useValue: { upsertFromChain, markCompleted } },
         { provide: DonationsService, useValue: { isTxProcessed } },
-        { provide: getRepositoryToken(SyncState), useValue: { findOne: jest.fn(), save: jest.fn() } },
+        { provide: getRepositoryToken(SyncState), useValue: syncStateRepo },
       ],
     }).compile();
 
@@ -25,6 +26,8 @@ describe('SyncService', () => {
     upsertFromChain.mockReset();
     markCompleted.mockReset();
     isTxProcessed.mockReset().mockResolvedValue(false);
+    syncStateRepo.findOne.mockReset();
+    syncStateRepo.save.mockReset();
   });
 
   it('extracts contractPoolId, creatorWallet, and goal and calls upsertFromChain', async () => {
@@ -39,6 +42,66 @@ describe('SyncService', () => {
       contractPoolId: 'pool-42',
       creatorWallet: 'GABC123',
       goal: '50000',
+    });
+  });
+
+  describe('cursor persistence', () => {
+    it('getCursor returns null when no cursor has been set', () => {
+      expect(service.getCursor()).toBeNull();
+    });
+
+    it('saveCursor persists the cursor value and updates in-memory state', async () => {
+      syncStateRepo.save.mockResolvedValue({
+        key: 'horizon_cursor',
+        value: 'cursor-42',
+      });
+
+      await service.saveCursor('cursor-42');
+
+      expect(service.getCursor()).toBe('cursor-42');
+      expect(syncStateRepo.save).toHaveBeenCalledWith({
+        key: 'horizon_cursor',
+        value: 'cursor-42',
+      });
+    });
+
+    it('saveCursor overwrites a previously set cursor', async () => {
+      syncStateRepo.save.mockResolvedValue({
+        key: 'horizon_cursor',
+        value: 'cursor-first',
+      });
+      await service.saveCursor('cursor-first');
+
+      syncStateRepo.save.mockResolvedValue({
+        key: 'horizon_cursor',
+        value: 'cursor-second',
+      });
+      await service.saveCursor('cursor-second');
+
+      expect(service.getCursor()).toBe('cursor-second');
+      expect(syncStateRepo.save).toHaveBeenCalledTimes(2);
+    });
+
+    it('onModuleInit restores the cursor from the database on startup', async () => {
+      syncStateRepo.findOne.mockResolvedValue({
+        key: 'horizon_cursor',
+        value: 'restored-cursor',
+      });
+
+      await service.onModuleInit();
+
+      expect(syncStateRepo.findOne).toHaveBeenCalledWith({
+        where: { key: 'horizon_cursor' },
+      });
+      expect(service.getCursor()).toBe('restored-cursor');
+    });
+
+    it('onModuleInit leaves cursor null when no state exists in the database', async () => {
+      syncStateRepo.findOne.mockResolvedValue(null);
+
+      await service.onModuleInit();
+
+      expect(service.getCursor()).toBeNull();
     });
   });
 
@@ -108,7 +171,10 @@ describe('SyncService', () => {
     });
 
     it('warns and skips on duplicate txHash within the same run', async () => {
-      const loggerWarnSpy = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+      const loggerWarnSpy = jest
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        .spyOn((service as any).logger, 'warn')
+        .mockImplementation(() => {});
       const event: HorizonContractEvent = {
         topic: ['pool_crtd', 'pool-3'],
         value: ['GDUP', '300'],
@@ -118,7 +184,9 @@ describe('SyncService', () => {
       await service.processPoolCreatedEvent(event);
       await service.processPoolCreatedEvent(event);
 
-      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining('dup-hash'));
+      expect(loggerWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('dup-hash'),
+      );
       expect(upsertFromChain).toHaveBeenCalledTimes(1);
     });
 
