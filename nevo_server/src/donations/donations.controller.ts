@@ -1,14 +1,4 @@
-import {
-  Controller,
-  DefaultValuePipe,
-  Get,
-  Param,
-  ParseEnumPipe,
-  ParseUUIDPipe,
-  Query,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { DonationSortBy, DonationsService } from './donations.service.js';
@@ -20,7 +10,10 @@ export class DonationsController {
 
   @Get('pools/:id/donations')
   findByPool(@Param('id') id: string, @Query() query: GetDonationsDto) {
-    const sort: DonationSortBy = query.sortBy === 'largest' ? 'largest' : 'newest';
+    const sort =
+      query.sortBy === DonationSortBy.largest
+        ? DonationSortBy.largest
+        : DonationSortBy.newest;
     return this.donationsService.findByPool(id, sort, query.page, query.limit);
   }
 
@@ -30,7 +23,15 @@ export class DonationsController {
     @Req() req: Request & { user: { publicKey: string } },
     @Query() query: GetDonationsDto,
   ) {
-    const sort: DonationSortBy = query.sortBy === 'largest' ? 'largest' : 'newest';
-    return this.donationsService.findByDonor(req.user.publicKey, sort, query.page, query.limit);
+    const sort =
+      query.sortBy === DonationSortBy.largest
+        ? DonationSortBy.largest
+        : DonationSortBy.newest;
+    return this.donationsService.findByDonor(
+      req.user.publicKey,
+      sort,
+      query.page,
+      query.limit,
+    );
   }
 }

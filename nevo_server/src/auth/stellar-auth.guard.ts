@@ -1,32 +1,9 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { Request } from 'express';
-import { getJwtSecret } from './jwt.config.js';
+import { Injectable } from '@nestjs/common';
+import { JwtAuthGuard } from './jwt-auth.guard.js';
 
+/**
+ * @deprecated Use {@link JwtAuthGuard} directly. Kept as an alias so existing
+ * imports keep working after the guards were consolidated onto Passport's JWT strategy.
+ */
 @Injectable()
 export class StellarAuthGuard extends JwtAuthGuard {}
-
-  canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest<Request>();
-    const auth = req.headers['authorization'];
-    if (!auth?.startsWith('Bearer ')) throw new UnauthorizedException();
-    const token = auth.slice(7);
-    try {
-      const payload = this.jwtService.verify<{
-        sub: string;
-        publicKey: string;
-      }>(token, {
-        secret: getJwtSecret(),
-      });
-      (req as Request & { user: unknown }).user = payload;
-      return true;
-    } catch {
-      throw new UnauthorizedException();
-    }
-  }
-}

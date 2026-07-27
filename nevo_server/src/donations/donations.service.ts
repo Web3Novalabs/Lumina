@@ -15,9 +15,19 @@ export class DonationsService {
     private readonly donationRepo: Repository<Donation>,
   ) {}
 
+  /**
+   * Lists the donations recorded against a single pool.
+   * @param poolId The pool to list donations for.
+   * @param sortBy `newest` orders by creation date descending (the default);
+   *   `largest` orders by donation amount descending.
+   * @param page 1-based page number. Pagination is applied only when `page` or
+   *   `limit` is supplied, and defaults to page 1.
+   * @param limit Page size, clamped to 1-100 and defaulting to 10.
+   * @returns The matching donations.
+   */
   async findByPool(
     poolId: string,
-    sortBy: DonationSortBy = 'newest',
+    sortBy: DonationSortBy = DonationSortBy.newest,
     page?: number | string,
     limit?: number | string,
   ): Promise<Donation[]> {
@@ -27,7 +37,7 @@ export class DonationsService {
         ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
         : undefined;
 
-    if (sortBy === 'largest') {
+    if (sortBy === DonationSortBy.largest) {
       const qb = this.donationRepo
         .createQueryBuilder('d')
         .where('d.poolId = :poolId', { poolId })
@@ -58,7 +68,7 @@ export class DonationsService {
 
   async findByDonor(
     donorWallet: string,
-    sortBy: DonationSortBy = 'newest',
+    sortBy: DonationSortBy = DonationSortBy.newest,
     page?: number | string,
     limit?: number | string,
   ): Promise<Donation[]> {
@@ -68,7 +78,7 @@ export class DonationsService {
         ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
         : undefined;
 
-    if (sortBy === 'largest') {
+    if (sortBy === DonationSortBy.largest) {
       const qb = this.donationRepo
         .createQueryBuilder('d')
         .where('d.donorWallet = :donorWallet', { donorWallet })
