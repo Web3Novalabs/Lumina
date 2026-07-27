@@ -23,6 +23,11 @@ export interface RateLimitNotification {
   endpoint?: string;
 }
 
+/**
+ * Custom DOM event name dispatched when the HTTP client hits a rate limit.
+ * Subscribe with:
+ * `window.addEventListener(RATE_LIMIT_EVENT, (e: CustomEvent<RateLimitNotification>) => { ... })`
+ */
 export const RATE_LIMIT_EVENT = 'nevo:api-rate-limit';
 
 const DEFAULT_MAX_REQUESTS = 30;
@@ -48,6 +53,10 @@ export const DEFAULT_RATE_LIMIT_OPTIONS: RateLimitOptions = {
   ),
 };
 
+/**
+ * Merges partial rate-limit options with sensible defaults. Non-positive or
+ * missing values fall back to `DEFAULT_RATE_LIMIT_OPTIONS`.
+ */
 export function resolveRateLimitOptions(
   options: Partial<RateLimitOptions> = {}
 ): RateLimitOptions {
@@ -124,6 +133,10 @@ export function parseRetryAfterHeader(
   return null;
 }
 
+/**
+ * Dispatches `RATE_LIMIT_EVENT` on `window` so UI layers (notifications,
+ * toasts) can react to rate-limit errors without importing the API client.
+ */
 export function notifyRateLimit(error: RateLimitError): void {
   if (typeof window === 'undefined') return;
 
@@ -138,6 +151,11 @@ export function notifyRateLimit(error: RateLimitError): void {
   window.dispatchEvent(new CustomEvent(RATE_LIMIT_EVENT, { detail }));
 }
 
+/**
+ * In-memory sliding-window rate limiter keyed by arbitrary strings (e.g.
+ * endpoint paths). Used by the API client to enforce per-endpoint limits
+ * before requests are sent.
+ */
 export class ClientRateLimiter {
   private windows = new Map<string, WindowCounter>();
 
