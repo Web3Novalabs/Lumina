@@ -55,6 +55,11 @@ class ContractService {
     }
   }
 
+  /**
+   * Builds an XDR-encoded transaction to create a new donation pool.
+   *
+   * @param goal - Fundraising goal in stroops (1 XLM = 10,000,000 stroops).
+   */
   async buildCreatePoolTransaction(
     creator: string,
     title: string,
@@ -83,6 +88,11 @@ class ContractService {
     return prepared.toXDR();
   }
 
+  /**
+   * Builds an XDR-encoded transaction to donate to a pool.
+   *
+   * @param amount - Donation amount in stroops (1 XLM = 10,000,000 stroops).
+   */
   async buildDonateTransaction(
     poolId: number,
     donor: string,
@@ -109,6 +119,7 @@ class ContractService {
     return prepared.toXDR();
   }
 
+  /** Builds an XDR-encoded transaction to withdraw unallocated funds from a pool. */
   async buildWithdrawTransaction(
     poolId: number,
     creator: string,
@@ -134,6 +145,7 @@ class ContractService {
     return prepared.toXDR();
   }
 
+  /** Builds an XDR-encoded transaction to close a pool permanently. */
   async buildClosePoolTransaction(
     poolId: number,
     creator: string
