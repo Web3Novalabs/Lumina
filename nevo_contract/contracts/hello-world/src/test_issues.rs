@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Ledger},
     token::StellarAssetClient,
-    Address, Env, IntoVal, String, Symbol, Vec,
+    Address, Env, String, Symbol,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -182,7 +182,7 @@ fn test_contribute_to_active_pool_succeeds() {
 
 /// Test 2: Contribute to Closed pool fails
 #[test]
-#[should_panic(expected = "Pool is closed")]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_contribute_to_closed_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -498,7 +498,7 @@ fn test_close_cancelled_pool_succeeds() {
 
 /// Test 3: Close pool in Active state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_active_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -521,7 +521,7 @@ fn test_close_active_pool_fails() {
 
 /// Test 4: Close pool in Paused state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_paused_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -547,7 +547,7 @@ fn test_close_paused_pool_fails() {
 
 /// Test 5: Close pool in Completed state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_completed_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -573,7 +573,7 @@ fn test_close_completed_pool_fails() {
 
 /// Test 6: Close pool in Closed state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_already_closed_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();

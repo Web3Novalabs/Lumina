@@ -4,7 +4,7 @@ use super::*;
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},
     token::StellarAssetClient,
-    Address, Env, IntoVal, String, Vec,
+    Address, Env, IntoVal, String,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -105,7 +105,7 @@ fn test_close_pool() {
 }
 
 #[test]
-#[should_panic(expected = "Pool is closed")]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_donate_to_closed_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -181,7 +181,7 @@ fn test_multiple_pools() {
 }
 
 #[test]
-#[should_panic(expected = "InvalidAction")]
+#[should_panic(expected = "Error(Contract, #1)")]
 fn test_try_get_pool_returns_none_for_missing_pool() {
     let env = Env::default();
     let contract_id = env.register(Contract, ());
@@ -207,7 +207,7 @@ fn test_get_total_raised_starts_at_zero() {
 }
 
 #[test]
-#[should_panic(expected = "Pool not found")]
+#[should_panic(expected = "Error(Contract, #1)")]
 fn test_get_total_raised_rejects_missing_pool() {
     let env = Env::default();
     let contract_id = env.register(Contract, ());
@@ -401,7 +401,7 @@ fn test_protocol_fees_accumulation_on_claim() {
 }
 
 #[test]
-#[should_panic(expected = "Unauthorized admin")]
+#[should_panic(expected = "Error(Contract, #3)")]
 fn test_claim_protocol_fees_requires_admin_authorization() {
     let env = Env::default();
     env.mock_all_auths();
@@ -416,7 +416,7 @@ fn test_claim_protocol_fees_requires_admin_authorization() {
 }
 
 #[test]
-#[should_panic(expected = "No unclaimed fees")]
+#[should_panic(expected = "Error(Contract, #10)")]
 fn test_claim_protocol_fees_no_fees() {
     let env = Env::default();
     env.mock_all_auths();
@@ -463,7 +463,7 @@ fn test_claim_protocol_fees_multiple_claims_accumulate() {
 }
 
 #[test]
-#[should_panic(expected = "No unclaimed fees")]
+#[should_panic(expected = "Error(Contract, #10)")]
 fn test_protocol_fees_reset_after_claim() {
     let env = Env::default();
     env.mock_all_auths();
