@@ -3,6 +3,14 @@ export type ValidationRule<T = unknown> = {
   message: string;
 };
 
+/**
+ * Runs an array of validation rules against a value in order, returning the
+ * first error message encountered or `null` if all rules pass.
+ *
+ * @param value  The value to validate.
+ * @param rules  Validation rules to apply in order.
+ * @returns The first error message, or `null` if all rules pass.
+ */
 export const runValidation = async <T>(
   value: T,
   rules: ValidationRule<T>[]
@@ -16,6 +24,10 @@ export const runValidation = async <T>(
   return null;
 };
 
+/**
+ * Creates a rule that rejects `null`, `undefined`, empty strings, and empty arrays.
+ * Returns the validation rule object.
+ */
 export const isRequired = (
   message = 'This field is required'
 ): ValidationRule => ({
@@ -28,6 +40,10 @@ export const isRequired = (
   message,
 });
 
+/**
+ * Creates a rule that validates a string against a basic email pattern.
+ * Returns the validation rule object.
+ */
 export const isEmail = (
   message = 'Invalid email format'
 ): ValidationRule<string> => ({
@@ -39,6 +55,10 @@ export const isEmail = (
   message,
 });
 
+/**
+ * Creates a rule that validates a string as a phone number (digits, dashes,
+ * spaces, optional leading `+`). Returns the validation rule object.
+ */
 export const isPhone = (
   message = 'Invalid phone number format'
 ): ValidationRule<string> => ({
@@ -50,6 +70,10 @@ export const isPhone = (
   message,
 });
 
+/**
+ * Creates a rule that validates a string as a well-formed URL using `new URL()`.
+ * Returns the validation rule object.
+ */
 export const isUrl = (
   message = 'Invalid URL format'
 ): ValidationRule<string> => ({
@@ -65,6 +89,11 @@ export const isUrl = (
   message,
 });
 
+/**
+ * Creates a rule that validates a string or number as a positive decimal with
+ * up to two fractional digits (e.g. `"19.99"`, `100`).
+ * Returns the validation rule object.
+ */
 export const isCurrencyAmount = (
   message = 'Invalid currency amount'
 ): ValidationRule<string | number> => ({
@@ -77,6 +106,10 @@ export const isCurrencyAmount = (
   message,
 });
 
+/**
+ * Creates a rule that rejects strings shorter than `min` characters.
+ * Returns the validation rule object.
+ */
 export const minLength = (
   min: number,
   message?: string
@@ -88,6 +121,10 @@ export const minLength = (
   message: message || `Minimum length is ${min} characters`,
 });
 
+/**
+ * Creates a rule that rejects strings longer than `max` characters.
+ * Returns the validation rule object.
+ */
 export const maxLength = (
   max: number,
   message?: string
