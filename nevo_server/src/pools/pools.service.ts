@@ -2,9 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Pool, PoolStatus } from './pool.entity.js';
-import type { UpdatePoolDto } from './pools.controller.js';
+import type { UpdatePoolDto } from './dto/update-pool.dto.js';
 import type { CreatePoolDto } from './dto/create-pool.dto.js';
-import type { GetPoolsDto } from './dto/get-pools.dto.js';
+import type { FilterPoolsDto } from './dto/filter-pools.dto.js';
 import { ContractService } from '../contract/contract.service.js';
 
 export interface ChainPoolData {
@@ -57,14 +57,14 @@ export class PoolsService {
     );
   }
 
-  async findAll(query: GetPoolsDto): Promise<{
+  async findAll(query: FilterPoolsDto): Promise<{
     data: Pool[];
     total: number;
     page: number;
     limit: number;
   }> {
-    const page = query.page ? Math.max(1, parseInt(query.page, 10)) : 1;
-    const limit = query.limit ? Math.max(1, parseInt(query.limit, 10)) : 10;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
     const queryBuilder = this.poolRepo.createQueryBuilder('pool');
@@ -76,11 +76,8 @@ export class PoolsService {
     }
 
     if (query.status) {
-      const normalizedStatus =
-        query.status.charAt(0).toUpperCase() +
-        query.status.slice(1).toLowerCase();
       queryBuilder.andWhere('pool.status = :status', {
-        status: normalizedStatus as PoolStatus,
+        status: query.status,
       });
     }
 

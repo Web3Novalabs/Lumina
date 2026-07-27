@@ -14,7 +14,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
-  ApiBody,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -26,24 +25,11 @@ import {
 import type { Request } from 'express';
 import { PoolsService } from './pools.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
-import { GetPoolsDto } from './dto/get-pools.dto.js';
 import { ContractService } from '../contract/contract.service.js';
 import { CreatePoolDto } from './dto/create-pool.dto.js';
 import { DonatePoolDto } from './dto/donate-pool.dto.js';
-
-export interface UpdatePoolDto {
-  description?: string;
-  imageUrl?: string;
-  category?: string;
-}
-
-export interface WithdrawDto {
-  requesterWallet: string;
-}
-
-export interface ClosePoolDto {
-  requesterWallet: string;
-}
+import { FilterPoolsDto } from './dto/filter-pools.dto.js';
+import { UpdatePoolDto } from './dto/update-pool.dto.js';
 
 interface JwtPayload {
   sub: string;
@@ -93,7 +79,7 @@ export class PoolsController {
     },
   })
   @Get()
-  async findAll(@Query() query: GetPoolsDto) {
+  async findAll(@Query() query: FilterPoolsDto) {
     return this.poolsService.findAll(query);
   }
 
@@ -115,16 +101,6 @@ export class PoolsController {
       'goal and creator cannot be changed here.',
   })
   @ApiParam({ name: 'id', description: 'On-chain pool id.' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        description: { type: 'string' },
-        imageUrl: { type: 'string' },
-        category: { type: 'string' },
-      },
-    },
-  })
   @ApiOkResponse({ description: 'The updated pool.' })
   @ApiNotFoundResponse({ description: 'No pool with that id.' })
   @Patch(':id')
@@ -137,24 +113,13 @@ export class PoolsController {
   @ApiOperation({
     summary: 'Build a withdrawal transaction',
     description:
-      'Returns an unsigned XDR withdrawing the pool balance. Only the pool ' +
-      'creator may withdraw.',
+      'Returns an unsigned XDR withdrawing the pool balance. The requesting ' +
+      'wallet is taken from the JWT, and must be the pool creator.',
   })
+  @ApiBearerAuth('bearer')
   @ApiParam({ name: 'id', description: 'On-chain pool id.' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['requesterWallet'],
-      properties: {
-        requesterWallet: {
-          type: 'string',
-          description: 'Wallet requesting the withdrawal; must be the creator.',
-        },
-      },
-    },
-  })
   @ApiOkResponse({
-    description: 'Unsigned transaction for the wallet to sign and submit.',
+    description: 'Unsigned transaction for the creator to sign and submit.',
     schema: {
       type: 'object',
       properties: {
@@ -164,12 +129,18 @@ export class PoolsController {
     },
   })
   @ApiNotFoundResponse({ description: 'No pool with that id.' })
-  @ApiForbiddenResponse({ description: 'Requester is not the pool creator.' })
+  @ApiForbiddenResponse({
+    description: 'Authenticated wallet is not the pool creator.',
+  })
+  @UseGuards(JwtAuthGuard)
   @Post(':id/withdraw')
-  async withdraw(@Param('id') id: string, @Body() dto: WithdrawDto) {
+  async withdraw(
+    @Param('id') id: string,
+    @Req() req: { user: { publicKey: string } },
+  ) {
     const pool = await this.poolsService.findByContractId(id);
     if (!pool) throw new NotFoundException('Pool not found');
-    if (pool.creatorWallet !== dto.requesterWallet) {
+    if (pool.creatorWallet !== req.user.publicKey) {
       throw new ForbiddenException('Only the pool creator may withdraw');
     }
     return this.poolsService.buildWithdrawTx(pool);
