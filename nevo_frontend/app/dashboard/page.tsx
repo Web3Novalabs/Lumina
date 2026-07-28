@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/EmptyState';
 import ConnectWallet from '@/components/ConnectWallet';
 import { WalletAddress } from '@/components/WalletAddress';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
 
 // TODO: Replace with real API call once backend pool endpoints are implemented
@@ -65,6 +66,7 @@ function DashboardPageContent() {
   const { publicKey, loading, initialize } = useWalletStore();
   const [pools, setPools] = useState<Pool[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -75,11 +77,25 @@ function DashboardPageContent() {
   useEffect(() => {
     if (!publicKey) return;
     // TODO: Replace with real fetch filtered by creator === publicKey
+    let cancelled = false;
     const timer = setTimeout(() => {
-      setPools(MOCK_CREATOR_POOLS);
-      setLoadingPools(false);
+      try {
+        if (cancelled) return;
+        setPools(MOCK_CREATOR_POOLS);
+      } catch (err) {
+        if (cancelled) return;
+        const message =
+          err instanceof Error ? err.message : 'Failed to load pools';
+        setError(message);
+        toast(message, 'error');
+      } finally {
+        if (!cancelled) setLoadingPools(false);
+      }
     }, 400);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [publicKey]);
 
   // ── Summary metrics ────────────────────────────────────────────────────
@@ -188,6 +204,14 @@ function DashboardPageContent() {
       {/* ── Pool list ───────────────────────────────────────────────────── */}
       {loading || loadingPools ? (
         <PoolListSkeleton />
+      ) : error ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        >
+          <p className="font-medium">Failed to load pools</p>
+          <p className="mt-1">{error}</p>
+        </div>
       ) : pools.length === 0 ? (
         <EmptyState
           icon="pool"

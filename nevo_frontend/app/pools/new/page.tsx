@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { signTransaction } from '@stellar/freighter-api';
@@ -44,7 +45,7 @@ function validateImageFile(file: File): string | undefined {
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
-    const image = new Image();
+    const image = document.createElement('img');
     image.onload = () => {
       URL.revokeObjectURL(url);
       resolve(image);
@@ -650,11 +651,13 @@ function Step2({
             {imagePreviewUrl && (
               <div className="space-y-3">
                 <div className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <Image
                     src={imagePreviewUrl}
                     alt="Selected banner preview"
+                    width={1280}
+                    height={720}
                     className="h-52 w-full object-cover"
+                    unoptimized
                   />
                 </div>
 
@@ -679,11 +682,13 @@ function Step2({
 
                   {cropPreviewUrl && (
                     <div className="overflow-hidden rounded-2xl border border-[var(--color-border)]">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
+                      <Image
                         src={cropPreviewUrl}
                         alt="Crop preview"
+                        width={1280}
+                        height={720}
                         className="h-40 w-full object-cover"
+                        unoptimized
                       />
                     </div>
                   )}
@@ -794,14 +799,13 @@ function Step3({
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] overflow-hidden">
         {/* Banner */}
         {form.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <Image
             src={form.imageUrl}
             alt="Pool banner"
+            width={1280}
+            height={720}
             className="h-40 w-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = 'none';
-            }}
+            unoptimized
           />
         ) : (
           <div

@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWalletStore } from '@/src/store/walletStore';
 import { Avatar } from '@/components/Avatar';
 import { Button } from '@/components/Button';
 import { WalletAddress } from '@/components/WalletAddress';
+import { toast } from '@/components/Toast';
 
 // Mock user preferences store
 interface UserPreferences {
@@ -35,6 +36,23 @@ export default function ProfilePage() {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isEditingAvatar, setIsEditingAvatar] = useState(false);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        // TODO: Replace with real fetchMyProfile call
+        setPreferences(MOCK_PREFERENCES);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load profile';
+        console.error('fetchMyProfile failed:', err);
+        setError(message);
+        toast(message, 'error');
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Handle avatar upload
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,12 +92,22 @@ export default function ProfilePage() {
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight">
-          Profile & Settings
+          Profile &amp; Settings
         </h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           Manage your account information and preferences
         </p>
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        >
+          <p className="font-medium">Failed to load profile</p>
+          <p className="mt-1">{error}</p>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Profile Card */}
@@ -286,7 +314,16 @@ export default function ProfilePage() {
               </a>
             </div>
             <div className="space-y-3">
-              {([] as { id: string; type: string; amount: string; asset: string; recipient: string; date: string }[]).map((tx) => (
+              {(
+                [] as {
+                  id: string;
+                  type: string;
+                  amount: string;
+                  asset: string;
+                  recipient: string;
+                  date: string;
+                }[]
+              ).map((tx) => (
                 <div
                   key={tx.id}
                   className="flex items-center gap-4 p-3 rounded-xl hover:bg-[var(--color-surface-raised)] transition-colors"
