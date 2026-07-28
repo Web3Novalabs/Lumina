@@ -3,13 +3,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { EmptyState } from '@/components/EmptyState';
-import { Pagination, PoolCard, Skeleton } from '@/components';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { BackToTopButton, Pagination, PoolCard, Skeleton } from '@/components';
 import {
   usePoolsStore,
   type Pool,
   type PoolStatus,
 } from '@/src/store/poolsStore';
-import { useRouter, useSearchParams } from 'next/navigation';
 
 type SortOption = 'newest' | 'most-funded' | 'close-to-goal' | 'trending';
 
@@ -268,16 +268,12 @@ function buildDefaultFilters(pools: Pool[]): FilterState {
   };
 }
 
-export default function BrowsePoolsPage() {
+function BrowsePoolsPageContent() {
   const { pools, loading, error, fetchPools } = usePoolsStore();
-  const hasFetched = useRef(false);
-
   useEffect(() => {
-    if (!hasFetched.current) {
-      fetchPools();
-      hasFetched.current = true;
-    }
+    fetchPools();
   }, [fetchPools]);
+
   const bounds = useMemo(() => getBounds(pools), [pools]);
   const categories = useMemo(
     () => Array.from(new Set(pools.map((pool) => pool.category))).sort(),
@@ -476,14 +472,14 @@ export default function BrowsePoolsPage() {
     );
   }
 
-  if (loading && pools.length === 0) {
+  if (loading) {
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-6 py-10">
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <Skeleton variant="text" lines={2} className="w-64" />
         </div>
         <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} variant="card" />
           ))}
         </div>
@@ -687,18 +683,34 @@ export default function BrowsePoolsPage() {
               variant="bordered"
               icon="search"
               iconTone="muted"
-              title="No results found"
-              description="No pools match the current filter combination."
-              action={{
-                label: 'Clear all filters',
-                onClick: clearAllFilters,
-                variant: 'primary',
-              }}
-              secondaryAction={{
-                label: 'Create a Pool',
-                href: '/pools/new',
-                variant: 'link',
-              }}
+              title="No pools found"
+              description={
+                activeFilters.length > 0
+                  ? 'No pools match the current filter combination.'
+                  : 'There are no donation pools yet. Be the first to create one.'
+              }
+              action={
+                activeFilters.length > 0
+                  ? {
+                      label: 'Clear filters',
+                      onClick: clearAllFilters,
+                      variant: 'primary',
+                    }
+                  : {
+                      label: 'Create a Pool',
+                      href: '/pools/new',
+                      variant: 'primary',
+                    }
+              }
+              secondaryAction={
+                activeFilters.length > 0
+                  ? {
+                      label: 'Create a Pool',
+                      href: '/pools/new',
+                      variant: 'link',
+                    }
+                  : undefined
+              }
             />
           ) : (
             <div className="space-y-8">
@@ -728,6 +740,17 @@ export default function BrowsePoolsPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function BrowsePoolsPage() {
+  return (
+    <>
+      <ErrorBoundary>
+        <BrowsePoolsPageContent />
+      </ErrorBoundary>
+      <BackToTopButton />
+    </>
   );
 }
 
