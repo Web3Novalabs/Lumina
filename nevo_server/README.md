@@ -44,6 +44,77 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Database Migrations
+
+The schema is managed with TypeORM migrations. `synchronize` is off in every
+environment, so **the schema is only ever changed by running a migration** —
+starting the server will not create or alter tables for you.
+
+Migrations live in `src/migrations/` and run against the connection defined in
+`src/data-source.ts`, which reads the same `DB_HOST` / `DB_PORT` / `DB_USER` /
+`DB_PASSWORD` / `DB_NAME` variables as the app. Copy `.env.example` to `.env`
+and fill it in before running any of these.
+
+| Script | What it does |
+| --- | --- |
+| `npm run migration:generate -- src/migrations/<Name>` | Diffs your entities against the current database and writes a new migration file. Needs a reachable database. |
+| `npm run migration:run` | Applies every migration that has not been applied yet, oldest first. |
+| `npm run migration:revert` | Rolls back the single most recently applied migration. |
+
+Note the `--` before the path on `migration:generate`: without it npm swallows
+the argument instead of forwarding it to the TypeORM CLI.
+
+### First-time setup
+
+```bash
+# 1. install dependencies
+$ npm install
+
+# 2. configure the database connection
+$ cp .env.example .env   # then edit the DB_* variables
+
+# 3. create an empty database matching that connection, e.g.
+$ createdb nevo
+
+# 4. apply all existing migrations
+$ npm run migration:run
+
+# 5. start the server
+$ npm run start:dev
+```
+
+Step 4 is the one new contributors miss. If the app starts but every query
+fails with `relation "pools" does not exist`, the migrations have not been run.
+
+### Changing the schema
+
+1. Edit the relevant entity (e.g. `src/pools/pool.entity.ts`).
+2. Make sure your local database is already up to date, so the diff only
+   contains your change:
+   ```bash
+   $ npm run migration:run
+   ```
+3. Generate the migration, passing a descriptive name:
+   ```bash
+   $ npm run migration:generate -- src/migrations/AddCategoryToPools
+   ```
+   TypeORM prefixes the file with a timestamp, giving
+   `src/migrations/1782396384461-AddCategoryToPools.ts`.
+4. **Read the generated SQL before committing it.** TypeORM infers intent from
+   a schema diff and will happily emit a `DROP COLUMN` where you meant a
+   rename, which is silent data loss in production.
+5. Apply it locally and confirm the app still works:
+   ```bash
+   $ npm run migration:run
+   ```
+6. Commit the migration file alongside the entity change — never one without
+   the other.
+
+To undo a migration you have applied locally, `npm run migration:revert` steps
+back exactly one migration; run it repeatedly to go further back. Once a
+migration is merged and deployed, do not edit it — add a new migration that
+corrects it, since anyone who already ran the old one will never re-run it.
+
 ## Run tests
 
 ```bash
@@ -96,3 +167,5 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+//

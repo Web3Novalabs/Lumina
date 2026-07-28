@@ -1,9 +1,3 @@
-/**
- * Returns the shared Tailwind class string for text/input controls.
- *
- * @param hasError - When true, applies error border and focus ring colors.
- * @param className - Optional extra classes to append.
- */
 export function getControlClassName(hasError: boolean, className = ''): string {
   return [
     'w-full rounded-xl border px-3.5 py-2.5 text-sm',
@@ -20,12 +14,6 @@ export function getControlClassName(hasError: boolean, className = ''): string {
     .join(' ');
 }
 
-/**
- * Returns the shared Tailwind class string for select controls.
- *
- * @param hasError - When true, applies error border and focus ring colors.
- * @param className - Optional extra classes to append.
- */
 export function getSelectClassName(hasError: boolean, className = ''): string {
   return [
     getControlClassName(hasError),
@@ -37,11 +25,6 @@ export function getSelectClassName(hasError: boolean, className = ''): string {
     .join(' ');
 }
 
-/**
- * Returns the shared Tailwind class string for checkbox controls.
- *
- * @param hasError - When true, applies error border and focus ring colors.
- */
 export function getCheckboxClassName(hasError: boolean): string {
   return [
     'h-4 w-4 shrink-0 rounded border',
