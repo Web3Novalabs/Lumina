@@ -332,6 +332,9 @@ export class ContractService {
     if (msg.includes('tx_bad_auth')) return new StellarError('tx_bad_auth');
     if (msg.includes('op_underfunded'))
       return new StellarError('op_underfunded');
+    if (msg.includes('op_no_source_account'))
+      return new StellarError('op_no_source_account');
+    if (msg.includes('timeout')) return new StellarError('timeout');
     return new StellarError(msg);
   }
 }
