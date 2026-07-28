@@ -18,7 +18,7 @@ function DashboardPageContent() {
   const { publicKey, loading, initialize } = useWalletStore();
   const [pools, setPools] = useState<Pool[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [poolsError, setPoolsError] = useState<string | null>(null);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -28,11 +28,26 @@ function DashboardPageContent() {
 
   useEffect(() => {
     if (!publicKey) return;
-    apiClient
-      .get<Pool[]>(`/pools?creator=${publicKey}`)
-      .then((data) => setPools(data ?? []))
-      .catch(() => setPools([]))
-      .finally(() => setLoadingPools(false));
+    // TODO: Replace with real fetch filtered by creator === publicKey
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      try {
+        if (cancelled) return;
+        setPools(MOCK_CREATOR_POOLS);
+      } catch (err) {
+        if (cancelled) return;
+        const message =
+          err instanceof Error ? err.message : 'Failed to load pools';
+        setPoolsError(message);
+        toast(message, 'error');
+      } finally {
+        if (!cancelled) setLoadingPools(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [publicKey]);
 
   // ── Summary metrics ────────────────────────────────────────────────────
@@ -136,13 +151,13 @@ function DashboardPageContent() {
       {/* ── Pool list ───────────────────────────────────────────────────── */}
       {loading || loadingPools ? (
         <PoolListSkeleton />
-      ) : error ? (
+      ) : poolsError ? (
         <div
           role="alert"
           className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
         >
           <p className="font-medium">Failed to load pools</p>
-          <p className="mt-1">{error}</p>
+          <p className="mt-1">{poolsError}</p>
         </div>
       ) : pools.length === 0 ? (
         <EmptyState
