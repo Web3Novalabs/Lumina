@@ -41,10 +41,10 @@ export default function ProfilePage() {
   const [preferences, setPreferences] =
     useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-<<<<<<< HEAD
   const [profile, setProfile] = useState<ApiProfile | null>(null);
   const [recentDonations, setRecentDonations] = useState<ApiDonation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -64,7 +64,10 @@ export default function ProfilePage() {
         setIsLoading(false);
       })
       .catch((err) => {
+        const message = parseApiError(err);
         console.error('Failed to load profile:', err);
+        setFetchError(message);
+        toast(message, 'error');
       })
       .finally(() => {
         if (active) {
@@ -74,26 +77,6 @@ export default function ProfilePage() {
     return () => {
       active = false;
     };
-=======
-  const [isEditingAvatar, setIsEditingAvatar] = useState(false);
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [profileError, setProfileError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        // TODO: Replace with real fetchMyProfile call
-        setPreferences(MOCK_PREFERENCES);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Failed to load profile';
-        console.error('fetchMyProfile failed:', err);
-        setProfileError(message);
-        toast(message, 'error');
-      }
-    }, 300);
-    return () => clearTimeout(timer);
->>>>>>> 796e688 (refactor: rename error state to fetchError/setsError to avoid collision)
   }, []);
 
   // Handle avatar upload
@@ -145,13 +128,13 @@ export default function ProfilePage() {
         </p>
       </div>
 
-      {profileError && (
+      {fetchError && (
         <div
           role="alert"
           className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
         >
           <p className="font-medium">Failed to load profile</p>
-          <p className="mt-1">{profileError}</p>
+          <p className="mt-1">{fetchError}</p>
         </div>
       )}
 
