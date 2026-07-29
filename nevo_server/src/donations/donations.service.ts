@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Donation } from './donation.entity.js';
 
-export type DonationSortBy = 'newest' | 'largest';
+export enum DonationSortBy {
+  newest = 'newest',
+  largest = 'largest',
+}
 
 @Injectable()
 export class DonationsService {
@@ -12,70 +15,120 @@ export class DonationsService {
     private readonly donationRepo: Repository<Donation>,
   ) {}
 
+  /**
+   * Lists the donations recorded against a single pool.
+   * @param poolId The pool to list donations for.
+   * @param sortBy `newest` orders by creation date descending (the default);
+   *   `largest` orders by donation amount descending.
+   * @param page 1-based page number. Pagination is applied only when `page` or
+   *   `limit` is supplied, and defaults to page 1.
+   * @param limit Page size, clamped to 1-100 and defaulting to 10.
+   * @returns The matching donations.
+   */
   async findByPool(
-    poolId: number,
-    page: number,
-    limit: number,
-  ): Promise<PaginatedResult<Donation>> {
-    const [data, total] = await this.donationRepo.findAndCount({
+    poolId: string,
+    sortBy: DonationSortBy = DonationSortBy.newest,
+    page?: number | string,
+    limit?: number | string,
+  ): Promise<Donation[]> {
+    const pageNum = page !== undefined ? Math.max(1, parseInt(String(page), 10) || 1) : undefined;
+    const limitNum =
+      limit !== undefined
+        ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
+        : undefined;
+
+    if (sortBy === DonationSortBy.largest) {
+      const qb = this.donationRepo
+        .createQueryBuilder('d')
+        .where('d.poolId = :poolId', { poolId })
+        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC');
+
+      if (pageNum !== undefined || limitNum !== undefined) {
+        const p = pageNum ?? 1;
+        const l = limitNum ?? 10;
+        qb.skip((p - 1) * l).take(l);
+      }
+      return qb.getMany();
+    }
+
+    const findOptions: any = {
       where: { poolId },
       order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
-    return { data, total, page, limit };
+    };
+
+    if (pageNum !== undefined || limitNum !== undefined) {
+      const p = pageNum ?? 1;
+      const l = limitNum ?? 10;
+      findOptions.skip = (p - 1) * l;
+      findOptions.take = l;
+    }
+
+    return this.donationRepo.find(findOptions);
   }
 
   async findByDonor(
     donorWallet: string,
-    page: number,
-    limit: number,
-  ): Promise<PaginatedResult<DonationWithPool>> {
-    const [rows, total] = await this.donationRepo
-      .createQueryBuilder('d')
-      .leftJoin('pools', 'p', 'p.contract_pool_id = CAST(d.pool_id AS varchar)')
-      .select([
-        'd.id          AS id',
-        'd.tx_hash      AS "txHash"',
-        'd.pool_id      AS "poolId"',
-        'd.donor_wallet AS "donorWallet"',
-        'd.amount       AS amount',
-        'd.asset        AS asset',
-        'd.created_at   AS "createdAt"',
-        'p.title        AS "poolTitle"',
-      ])
-      .where('d.donor_wallet = :donorWallet', { donorWallet })
-      .orderBy('d.created_at', 'DESC')
-      .offset((page - 1) * limit)
-      .limit(limit)
-      .getRawMany<DonationWithPool>()
-      .then((data) => [data, 0] as [DonationWithPool[], number]);
+    sortBy: DonationSortBy = DonationSortBy.newest,
+    page?: number | string,
+    limit?: number | string,
+  ): Promise<Donation[]> {
+    const pageNum = page !== undefined ? Math.max(1, parseInt(String(page), 10) || 1) : undefined;
+    const limitNum =
+      limit !== undefined
+        ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
+        : undefined;
 
-    // get total count separately
-    const count = await this.donationRepo.count({
-      where: { donorWallet },
-    });
-
-    return { data: rows, total: count, page, limit };
-  async findByPool(poolId: string, sortBy: DonationSortBy = 'newest'): Promise<Donation[]> {
-    if (sortBy === 'largest') {
-      return this.donationRepo
-        .createQueryBuilder('d')
-        .where('d.poolId = :poolId', { poolId })
-        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC')
-        .getMany();
-    }
-    return this.donationRepo.find({ where: { poolId }, order: { createdAt: 'DESC' } });
-  }
-
-  async findByDonor(donorWallet: string, sortBy: DonationSortBy = 'newest'): Promise<Donation[]> {
-    if (sortBy === 'largest') {
-      return this.donationRepo
+    if (sortBy === DonationSortBy.largest) {
+      const qb = this.donationRepo
         .createQueryBuilder('d')
         .where('d.donorWallet = :donorWallet', { donorWallet })
-        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC')
-        .getMany();
+        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC');
+
+      if (pageNum !== undefined || limitNum !== undefined) {
+        const p = pageNum ?? 1;
+        const l = limitNum ?? 10;
+        qb.skip((p - 1) * l).take(l);
+      }
+      return qb.getMany();
     }
-    return this.donationRepo.find({ where: { donorWallet }, order: { createdAt: 'DESC' } });
+
+    const findOptions: any = {
+      where: { donorWallet },
+      order: { createdAt: 'DESC' },
+    };
+
+    if (pageNum !== undefined || limitNum !== undefined) {
+      const p = pageNum ?? 1;
+      const l = limitNum ?? 10;
+      findOptions.skip = (p - 1) * l;
+      findOptions.take = l;
+    }
+
+    return this.donationRepo.find(findOptions);
+  }
+
+  async isTxProcessed(txHash: string): Promise<boolean> {
+    const count = await this.donationRepo.countBy({ txHash });
+    return count > 0;
+  }
+
+  async recordDonation(data: {
+    poolId: string;
+    donorWallet: string;
+    amount: string;
+    asset: string;
+    txHash: string;
+    memo?: string;
+  }): Promise<Donation> {
+    return this.donationRepo.save(
+      this.donationRepo.create({
+        poolId: data.poolId,
+        donorWallet: data.donorWallet,
+        amount: data.amount,
+        asset: data.asset,
+        txHash: data.txHash,
+        memo: data.memo || null,
+      }),
+    );
   }
 }

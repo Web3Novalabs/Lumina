@@ -3,7 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { EmptyState } from '@/components/EmptyState';
-import { Pagination, PoolCard, Skeleton } from '@/components';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { BackToTopButton, Pagination, PoolCard, Skeleton } from '@/components';
 import {
   usePoolsStore,
   type Pool,
@@ -267,9 +268,8 @@ function buildDefaultFilters(pools: Pool[]): FilterState {
   };
 }
 
-export default function BrowsePoolsPage() {
+function BrowsePoolsPageContent() {
   const { pools, loading, error, fetchPools } = usePoolsStore();
-  const hasFetched = useRef(false);
   useEffect(() => {
     fetchPools();
   }, [fetchPools]);
@@ -283,14 +283,6 @@ export default function BrowsePoolsPage() {
   const hasHydrated = useRef(false);
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [searchInput, setSearchInput] = useState(defaultFilters.search);
-
-  useEffect(() => {
-    if (hasFetched.current) {
-      fetchPools(filters);
-    } else {
-      hasFetched.current = true;
-    }
-  }, [filters, fetchPools]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -748,6 +740,17 @@ export default function BrowsePoolsPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function BrowsePoolsPage() {
+  return (
+    <>
+      <ErrorBoundary>
+        <BrowsePoolsPageContent />
+      </ErrorBoundary>
+      <BackToTopButton />
+    </>
   );
 }
 

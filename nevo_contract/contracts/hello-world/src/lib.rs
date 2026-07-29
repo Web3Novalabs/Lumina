@@ -57,6 +57,59 @@ const POOL_CLOSED: Symbol = symbol_short!("pool_cls");
 const APPLICATION_SUBMITTED: Symbol = symbol_short!("app_sub");
 const SCHOOL_REGISTERED: Symbol = symbol_short!("schl_reg");
 
+// Issue #954: named constants for previously-uneventful state-changing functions
+const APP_APPROVED: Symbol = symbol_short!("app_aprvd");
+const MILESTONES_SET: Symbol = symbol_short!("mile_set");
+const FUNDS_CLAIMED: Symbol = symbol_short!("fund_clmd");
+const FEES_CLAIMED: Symbol = symbol_short!("fees_clmd");
+const DONATION_REFUND: Symbol = symbol_short!("don_refnd");
+const DEADLINE_SET: Symbol = symbol_short!("ddln_set");
+const POOL_STATE_SET: Symbol = symbol_short!("pool_stat");
+const SCHOOL_REG: Symbol = symbol_short!("schl_reg");
+const ADMIN_SET: Symbol = symbol_short!("admin_set");
+// Issue #954: shared constant replacing inline Symbol::new(&env, "creation_fee_updated")
+const FEE_UPDATED: Symbol = symbol_short!("fee_upd");
+
+// ─── Typed Error Enum (Issue #955) ───────────────────────────────────────
+
+/// All contract-level error conditions, encoded as XDR for off-chain callers.
+///
+/// Use `env.panic_with_error(ContractError::Variant)` instead of
+/// `panic!("string literal")` for these conditions so that the error is
+/// stable across contract versions and machine-readable.
+#[contracterror]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContractError {
+    /// Pool with the given ID does not exist in storage.
+    PoolNotFound = 1,
+    /// Pool is not in the state required for this operation.
+    InvalidPoolState = 2,
+    /// Caller is not the stored platform admin.
+    UnauthorizedAdmin = 3,
+    /// Operation rejected because the pool is already closed.
+    PoolIsClosed = 4,
+    /// Student has already submitted an application for this pool.
+    DuplicateApplication = 5,
+    /// Student has not applied to this pool.
+    StudentHasNotApplied = 6,
+    /// Only the school linked to the pool may approve applications.
+    OnlyLinkedSchoolCanApprove = 7,
+    /// Pool must be in Disbursed or Cancelled state before it can be closed.
+    PoolNotDisbursedOrRefunded = 8,
+    /// No admin address has been configured in storage.
+    AdminNotSet = 9,
+    /// There are no accumulated protocol fees to claim.
+    NoUnclaimedFees = 10,
+    /// Fee value is invalid (e.g. negative).
+    InvalidFee = 11,
+    /// Pool deadline has not yet passed (or grace period not elapsed).
+    PoolNotExpired = 12,
+    /// Donor has no recorded contribution in this pool to refund.
+    NoContributionToRefund = 13,
+    /// School address has not been registered by an admin.
+    SchoolNotRegistered = 14,
+}
+
 // Helper functions for timestamp/deadline edge-case tests
 // These are deterministic, test-oriented helpers used by unit tests
 // to avoid reliance on external ledger state in the test harness.
@@ -169,6 +222,9 @@ impl Contract {
         admin.require_auth();
         let admin_key = Symbol::new(&env, ADMIN_KEY);
         env.storage().persistent().set(&admin_key, &admin);
+
+        // Issue #954: emit admin-set event
+        env.events().publish((ADMIN_SET,), admin.clone());
     }
 
     /// Register a school's on-chain identity mapping.
@@ -290,7 +346,7 @@ impl Contract {
         creator.require_auth();
 
         if !Self::is_school_registered(env.clone(), school.clone()) {
-            panic!("School is not registered");
+            env.panic_with_error(ContractError::SchoolNotRegistered);
         }
 
         let pool_id = Self::create_pool(
@@ -321,16 +377,16 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         if pool.is_closed {
-            panic!("Pool is closed");
+            env.panic_with_error(ContractError::PoolIsClosed);
         }
 
         // TODO: Replace with real implementation from issue #XYZ
         // Pool state validation
         if pool.state != PoolState::Active {
-            panic!("InvalidPoolState");
+            env.panic_with_error(ContractError::InvalidPoolState);
         }
 
         let new_collected = pool.collected + amount;
@@ -387,7 +443,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         (
             pool_id,
@@ -433,7 +489,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.collected
     }
@@ -444,12 +500,12 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.sponsor.require_auth();
 
         if pool.state != PoolState::Disbursed && pool.state != PoolState::Cancelled {
-            panic!("PoolNotDisbursedOrRefunded");
+            env.panic_with_error(ContractError::PoolNotDisbursedOrRefunded);
         }
 
         let updated_pool = Pool {
@@ -486,7 +542,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         env.storage()
             .persistent()
@@ -501,7 +557,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         env.storage()
             .persistent()
@@ -517,7 +573,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let applicant_key = (
             Symbol::new(&env, APPLICANT_PREFIX),
@@ -525,7 +581,7 @@ impl Contract {
             student.clone(),
         );
         if env.storage().persistent().has(&applicant_key) {
-            panic!("Duplicate application");
+            env.panic_with_error(ContractError::DuplicateApplication);
         }
 
         let count_key = (Symbol::new(&env, APPLICATION_COUNT_PREFIX), pool_id);
@@ -566,7 +622,7 @@ impl Contract {
 
         let linked_school = Self::get_pool_school(env.clone(), pool_id);
         if linked_school != school {
-            panic!("Only linked school can approve");
+            env.panic_with_error(ContractError::OnlyLinkedSchoolCanApprove);
         }
 
         let applicant_key = (
@@ -575,7 +631,7 @@ impl Contract {
             student.clone(),
         );
         if !env.storage().persistent().has(&applicant_key) {
-            panic!("Student has not applied");
+            env.panic_with_error(ContractError::StudentHasNotApplied);
         }
 
         let status = if approved {
@@ -583,7 +639,11 @@ impl Contract {
         } else {
             String::from_str(&env, APPLICATION_STATUS_REJECTED)
         };
-        Self::set_application_status(env, pool_id, student, status);
+        Self::set_application_status(env.clone(), pool_id, student.clone(), status);
+
+        // Issue #954: emit application-approved event
+        env.events()
+            .publish((APP_APPROVED, pool_id), (student.clone(), approved));
     }
 
     /// Set application milestones and enforce sum(amounts) == pool goal.
@@ -599,7 +659,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         if milestones.is_empty() {
             panic!("Milestones required");
@@ -616,8 +676,12 @@ impl Contract {
             panic!("Milestone total must equal pool goal");
         }
 
-        let milestones_key = (Symbol::new(&env, MILESTONES_PREFIX), pool_id, student);
+        let milestones_key = (Symbol::new(&env, MILESTONES_PREFIX), pool_id, student.clone());
         env.storage().persistent().set(&milestones_key, &milestones);
+
+        // Issue #954: emit milestones-set event
+        env.events()
+            .publish((MILESTONES_SET, pool_id), (student.clone(), milestones.len()));
     }
 
     /// Get student milestones for a pool.
@@ -685,7 +749,7 @@ impl Contract {
     /// Surplus = pool.collected - locked_funds.
     ///
     /// # Panics
-    /// - `"Pool not found"` if pool_id is invalid
+    /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `"Insolvency: locked funds exceed collected"` if locked > collected
     /// - `"No surplus to withdraw"` if surplus == 0
     pub fn withdraw_unallocated_funds(env: Env, pool_id: u32, token_address: Address) {
@@ -693,7 +757,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.sponsor.require_auth();
 
@@ -816,7 +880,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let collected = pool.collected as i128;
 
@@ -862,6 +926,12 @@ impl Contract {
         // Persist the updated running total
         application.amount_claimed += claim_amount;
         env.storage().persistent().set(&app_key, &application);
+
+        // Issue #954: emit funds-claimed event
+        env.events().publish(
+            (FUNDS_CLAIMED, pool_id),
+            (student.clone(), claim_amount, application.amount_claimed),
+        );
     }
 
     /// Claim accumulated protocol fees on behalf of the protocol/treasury.
@@ -875,8 +945,8 @@ impl Contract {
     /// * `token_address` - The token to transfer fees as
     ///
     /// # Panics
-    /// - `"Unauthorized admin"` if the caller is not the stored admin address
-    /// - `"No unclaimed fees"` if there are no accumulated fees to claim
+    /// - `ContractError::UnauthorizedAdmin` if the caller is not the stored admin address
+    /// - `ContractError::NoUnclaimedFees` if there are no accumulated fees to claim
     pub fn claim_protocol_fees(env: Env, admin: Address, token_address: Address) -> i128 {
         admin.require_auth();
 
@@ -886,9 +956,9 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
-            .expect("Admin not set");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
         if stored_admin != admin {
-            panic!("Unauthorized admin");
+            env.panic_with_error(ContractError::UnauthorizedAdmin);
         }
 
         // Get accumulated unclaimed fees
@@ -900,7 +970,7 @@ impl Contract {
             .unwrap_or(0);
 
         if fees == 0 {
-            panic!("No unclaimed fees");
+            env.panic_with_error(ContractError::NoUnclaimedFees);
         }
 
         // Transfer accumulated fees to admin
@@ -909,6 +979,10 @@ impl Contract {
 
         // Reset unclaimed fees to 0
         env.storage().persistent().set(&unclaimed_fees_key, &0i128);
+
+        // Issue #954: emit fees-claimed event
+        env.events()
+            .publish((FEES_CLAIMED, admin.clone()), (fees,));
 
         fees
     }
@@ -919,14 +993,14 @@ impl Contract {
     ///
     /// Only the stored admin may call this function.
     /// A fee of zero is valid (disables the creation fee).
-    /// A negative fee panics with `"InvalidFee"`.
+    /// A negative fee panics with `ContractError::InvalidFee`.
     ///
-    /// Emits a `creation_fee_updated` event on success.
+    /// Emits a `FEE_UPDATED` event on success.
     ///
     /// # Panics
-    /// - `"Admin not set"` if no admin has been configured
-    /// - `"Unauthorized admin"` if `admin` does not match the stored admin
-    /// - `"InvalidFee"` if `fee` is negative
+    /// - `ContractError::AdminNotSet` if no admin has been configured
+    /// - `ContractError::UnauthorizedAdmin` if `admin` does not match the stored admin
+    /// - `ContractError::InvalidFee` if `fee` is negative
     pub fn set_creation_fee(env: Env, admin: Address, fee: i128) {
         admin.require_auth();
 
@@ -935,21 +1009,20 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
-            .expect("Admin not set");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
         if stored_admin != admin {
-            panic!("Unauthorized admin");
+            env.panic_with_error(ContractError::UnauthorizedAdmin);
         }
 
         if fee < 0 {
-            panic!("InvalidFee");
+            env.panic_with_error(ContractError::InvalidFee);
         }
 
         let fee_key = Symbol::new(&env, CREATION_FEE_KEY);
         env.storage().persistent().set(&fee_key, &fee);
 
-        // Emit event: topics = ["creation_fee_updated"], data = new fee value
-        env.events()
-            .publish((Symbol::new(&env, "creation_fee_updated"),), fee);
+        // Issue #954: use shared FEE_UPDATED constant instead of inline Symbol::new
+        env.events().publish((FEE_UPDATED,), fee);
     }
 
     /// Get the current pool creation fee.
@@ -970,7 +1043,7 @@ impl Contract {
     /// The deadline must be in the future (greater than the current ledger).
     ///
     /// # Panics
-    /// - `"Pool not found"` if pool_id is invalid
+    /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `"Error(Auth, InvalidAction)"` if caller is not the pool sponsor
     /// - `"Deadline must be in the future"` if deadline <= current ledger
     pub fn set_pool_deadline(env: Env, pool_id: u32, deadline: u32) {
@@ -978,7 +1051,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.sponsor.require_auth();
 
@@ -988,6 +1061,10 @@ impl Contract {
 
         let deadline_key = (Symbol::new(&env, POOL_DEADLINE_PREFIX), pool_id);
         env.storage().persistent().set(&deadline_key, &deadline);
+
+        // Issue #954: emit deadline-set event
+        env.events()
+            .publish((DEADLINE_SET, pool_id), (pool.sponsor.clone(), deadline));
     }
 
     /// Get the refund deadline ledger for a pool.
@@ -1010,11 +1087,9 @@ impl Contract {
     ///      (`current_ledger >= deadline + REFUND_GRACE_PERIOD_LEDGERS`).
     ///
     /// # Panics
-    /// - `"Pool not found"` if pool_id is invalid
-    /// - `"PoolNotExpired"` if the deadline has not passed yet
-    /// - `"PoolNotExpired"` if the pool is exactly at the deadline (no grace)
-    /// - `"PoolNotExpired"` if inside the grace period
-    /// - `"No contribution to refund"` if the donor has no recorded contribution
+    /// - `ContractError::PoolNotFound` if pool_id is invalid
+    /// - `ContractError::PoolNotExpired` if the deadline has not passed (or grace not elapsed)
+    /// - `ContractError::NoContributionToRefund` if the donor has no recorded contribution
     pub fn refund_donation(env: Env, pool_id: u32, donor: Address, token_address: Address) {
         donor.require_auth();
 
@@ -1022,7 +1097,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let deadline_key = (Symbol::new(&env, POOL_DEADLINE_PREFIX), pool_id);
         let deadline: u32 = env
@@ -1038,7 +1113,7 @@ impl Contract {
             || current_ledger <= deadline
             || current_ledger < deadline + REFUND_GRACE_PERIOD_LEDGERS
         {
-            panic!("PoolNotExpired");
+            env.panic_with_error(ContractError::PoolNotExpired);
         }
 
         let contrib_key = (pool_id, "contribution", &donor);
@@ -1049,7 +1124,7 @@ impl Contract {
             .unwrap_or(0);
 
         if contribution == 0 {
-            panic!("No contribution to refund");
+            env.panic_with_error(ContractError::NoContributionToRefund);
         }
 
         // Clear the contribution record before transferring (re-entrancy guard)
@@ -1065,6 +1140,10 @@ impl Contract {
             &donor,
             &(contribution as i128),
         );
+
+        // Issue #954: emit donation-refund event
+        env.events()
+            .publish((DONATION_REFUND, pool_id), (donor.clone(), contribution));
     }
 
     /// Donate to a pool using a specific token.
@@ -1081,16 +1160,16 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         if pool.is_closed {
-            panic!("Pool is closed");
+            env.panic_with_error(ContractError::PoolIsClosed);
         }
 
         // TODO: Replace with real implementation from issue #XYZ
         // Pool state validation
         if pool.state != PoolState::Active {
-            panic!("InvalidPoolState");
+            env.panic_with_error(ContractError::InvalidPoolState);
         }
 
         if amount <= 0 {
@@ -1167,7 +1246,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
-            .expect("Admin not set");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
         if stored_admin != admin {
             panic!("Error(Auth, InvalidAction)");
         }
@@ -1221,10 +1300,15 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
-        pool.state = state;
+        let old_state = pool.state.clone();
+        pool.state = state.clone();
         env.storage().persistent().set(&pool_id, &pool);
+
+        // Issue #954: emit pool-state-set event
+        env.events()
+            .publish((POOL_STATE_SET, pool_id), (old_state, state));
     }
 }
 

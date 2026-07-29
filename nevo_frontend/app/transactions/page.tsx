@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { BackToTopButton } from '@/components';
 import { EmptyState } from '@/components/EmptyState';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { apiClient } from '@/lib/api-client';
@@ -513,8 +514,11 @@ function StatusBadge({ status }: { status: TxStatus }) {
 
 export default function TransactionsPage() {
   return (
-    <ProtectedRoute>
-      <TransactionsPageContent />
-    </ProtectedRoute>
+    <>
+      <ProtectedRoute>
+        <TransactionsPageContent />
+      </ProtectedRoute>
+      <BackToTopButton />
+    </>
   );
 }

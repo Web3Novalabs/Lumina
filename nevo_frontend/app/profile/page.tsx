@@ -5,7 +5,15 @@ import { useWalletStore } from '@/src/store/walletStore';
 import { Avatar } from '@/components/Avatar';
 import { Button } from '@/components/Button';
 import { WalletAddress } from '@/components/WalletAddress';
-import { fetchMyProfile, type ApiProfile } from '@/lib/api-client';
+import {
+  fetchMyProfile,
+  fetchMyDonations,
+  updateProfile,
+  type ApiProfile,
+  type ApiDonation,
+} from '@/lib/api-client';
+import { parseApiError } from '@/lib/errors';
+import { toast } from '@/components/Toast';
 
 interface UserPreferences {
   email: string;
@@ -34,12 +42,16 @@ export default function ProfilePage() {
     useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profile, setProfile] = useState<ApiProfile | null>(null);
+  const [recentDonations, setRecentDonations] = useState<ApiDonation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    fetchMyProfile()
-      .then((data) => {
+    let active = true;
+    Promise.all([fetchMyProfile(), fetchMyDonations(5).catch(() => [])])
+      .then(([data, donations]) => {
+        if (!active) return;
         setProfile(data);
+        setRecentDonations(donations);
         setPreferences((p) => ({
           ...p,
           displayName:
@@ -48,30 +60,16 @@ export default function ProfilePage() {
               ? `${data.publicKey.slice(0, 6)}…${data.publicKey.slice(-4)}`
               : ''),
         }));
+        setIsLoading(false);
       })
-      .catch(() => {
-        // API unavailable — keep defaults
-      });
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    async function loadProfile() {
-      setIsLoading(true);
-      try {
-        const data = await fetchMyProfile();
-        if (active) {
-          setPreferences(data);
-        }
-      } catch (err) {
+      .catch((err) => {
         console.error('Failed to load profile:', err);
-      } finally {
+      })
+      .finally(() => {
         if (active) {
           setIsLoading(false);
         }
-      }
-    }
-    loadProfile();
+      });
     return () => {
       active = false;
     };
@@ -92,10 +90,16 @@ export default function ProfilePage() {
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveProfile = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // TODO: Save to backend
-    setIsEditingProfile(false);
+    try {
+      const updated = await updateProfile(preferences.displayName);
+      setProfile(updated);
+      toast('Profile updated successfully');
+      setIsEditingProfile(false);
+    } catch (err) {
+      toast(parseApiError(err), 'error');
+    }
   };
 
   const toggleNotification = (key: keyof UserPreferences['notifications']) => {
@@ -175,6 +179,8 @@ export default function ProfilePage() {
                 {isLoading ? (
                   <div className="h-5 w-40 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mx-auto" />
                 ) : (
+                  // Copy-to-clipboard for the public key is already provided
+                  // by WalletAddress itself (see #883) — don't add a second one.
                   <WalletAddress address={publicKey || ''} />
                 )}
               </div>
@@ -349,30 +355,12 @@ export default function ProfilePage() {
               </a>
             </div>
             <div className="space-y-3">
-              {(
-                [] as Array<{
-                  id: string;
-                  type: string;
-                  amount: string;
-                  asset: string;
-                  recipient: string;
-                  date: string;
-                }>
-              ).length === 0 ? (
+              {recentDonations.length === 0 ? (
                 <p className="text-sm text-[var(--color-text-muted)]">
-                  No recent activity yet.
+                  No activity yet.
                 </p>
               ) : (
-                (
-                  [] as Array<{
-                    id: string;
-                    type: string;
-                    amount: string;
-                    asset: string;
-                    recipient: string;
-                    date: string;
-                  }>
-                ).map((tx) => (
+                recentDonations.map((tx) => (
                   <div
                     key={tx.id}
                     className="flex items-center gap-4 rounded-xl p-3 transition-colors hover:bg-[var(--color-surface-raised)]"
@@ -386,21 +374,43 @@ export default function ProfilePage() {
                         stroke="currentColor"
                         className="size-4"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"
-                        />
+                        {tx.type === 'donation' ? (
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"
+                          />
+                        ) : tx.type === 'pool_creation' ? (
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                          />
+                        ) : (
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                          />
+                        )}
                       </svg>
                     </div>
-                    <div className="min-w-0 flex-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Donation</span>
-                        <span className="text-sm font-semibold tabular-nums">
-                          {tx.amount} {tx.asset}
+                        <span className="text-sm font-medium">
+                          {tx.type === 'donation'
+                            ? 'Donation'
+                            : tx.type === 'pool_creation'
+                              ? 'Pool Created'
+                              : 'Withdrawal'}
                         </span>
+                        {tx.amount !== '0' && (
+                          <span className="text-sm font-semibold tabular-nums">
+                            {tx.amount} {tx.asset}
+                          </span>
+                        )}
                       </div>
-                      <p className="truncate text-xs text-[var(--color-text-muted)]">
+                      <p className="text-xs text-[var(--color-text-muted)] truncate">
                         {tx.recipient}
                       </p>
                       <time

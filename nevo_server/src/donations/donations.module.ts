@@ -1,12 +1,11 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Donation } from './donation.entity.js';
-import { DonationsService } from './donations.service.js';
-import { DonationsController } from './donations.controller.js';
-import { ContractModule } from '../contract/contract.module.js';
+import { Donation } from './donation.entity';
+import { DonationsService } from './donations.service';
+import { DonationsController } from './donations.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Donation]), ContractModule],
+  imports: [TypeOrmModule.forFeature([Donation])],
   providers: [DonationsService],
   controllers: [DonationsController],
   exports: [DonationsService],

@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedException } from '@nestjs/common';
-import { AuthService, VerifyDto } from './auth.service';
+import { AuthService } from './auth.service';
+import { VerifyAuthDto } from './dto/verify-auth.dto';
 import { UsersService } from '../users/users.service';
 import { NonceService } from './nonce.service';
 import { User } from '../users/user.entity';
@@ -17,7 +18,7 @@ describe('AuthService', () => {
   const mockUser: User = {
     id: 'uuid-1',
     publicKey: 'GBM3T7V2NNWJVSQ5Q7WPEMMO5G2E2UZY4D2Z24W73SHZJ2E4A5F2D3FZ',
-    username: null,
+    displayName: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -233,19 +234,15 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message,
       };
 
-      jest
-        .spyOn(nonceService, 'findAndValidateNonce')
-        .mockResolvedValue(null); // Nonce validation fails
+      jest.spyOn(nonceService, 'findAndValidateNonce').mockResolvedValue(null); // Nonce validation fails
 
-      await expect(service.verify(dto)).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(service.verify(dto)).rejects.toThrow(UnauthorizedException);
       await expect(service.verify(dto)).rejects.toThrow(
         'Invalid or expired nonce',
       );
@@ -256,19 +253,15 @@ describe('AuthService', () => {
       const message = 'nonexistent-nonce';
       const signature = keypair.sign(Buffer.from(message)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message,
       };
 
-      jest
-        .spyOn(nonceService, 'findAndValidateNonce')
-        .mockResolvedValue(null);
+      jest.spyOn(nonceService, 'findAndValidateNonce').mockResolvedValue(null);
 
-      await expect(service.verify(dto)).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(service.verify(dto)).rejects.toThrow(UnauthorizedException);
     });
   });
 
@@ -287,7 +280,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -297,21 +290,15 @@ describe('AuthService', () => {
         .spyOn(nonceService, 'findAndValidateNonce')
         .mockResolvedValue(validNonce);
       jest.spyOn(nonceService, 'markNonceAsUsed').mockResolvedValue();
-      jest
-        .spyOn(usersService, 'findOrCreate')
-        .mockResolvedValue(
-          {
-            ...mockUser,
-            publicKey: keypair.publicKey(),
-          } as User,
-        );
+      jest.spyOn(usersService, 'findOrCreate').mockResolvedValue({
+        ...mockUser,
+        publicKey: keypair.publicKey(),
+      });
       jest.spyOn(jwtService, 'sign').mockReturnValue('jwt-token');
 
       await service.verify(dto);
 
-      expect(nonceService.markNonceAsUsed).toHaveBeenCalledWith(
-        validNonce.id,
-      );
+      expect(nonceService.markNonceAsUsed).toHaveBeenCalledWith(validNonce.id);
     });
 
     it('should fail on second verify call with same nonce (nonce already used)', async () => {
@@ -319,7 +306,7 @@ describe('AuthService', () => {
       const nonce = 'used-nonce';
       const signature = keypair.sign(Buffer.from(nonce)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -339,14 +326,10 @@ describe('AuthService', () => {
         .spyOn(nonceService, 'findAndValidateNonce')
         .mockResolvedValueOnce(validNonce);
       jest.spyOn(nonceService, 'markNonceAsUsed').mockResolvedValue();
-      jest
-        .spyOn(usersService, 'findOrCreate')
-        .mockResolvedValue(
-          {
-            ...mockUser,
-            publicKey: keypair.publicKey(),
-          } as User,
-        );
+      jest.spyOn(usersService, 'findOrCreate').mockResolvedValue({
+        ...mockUser,
+        publicKey: keypair.publicKey(),
+      });
       jest.spyOn(jwtService, 'sign').mockReturnValue('jwt-token');
 
       // First verify - should succeed
@@ -358,9 +341,7 @@ describe('AuthService', () => {
         .mockResolvedValueOnce(null);
 
       // Second verify - should fail
-      await expect(service.verify(dto)).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(service.verify(dto)).rejects.toThrow(UnauthorizedException);
       await expect(service.verify(dto)).rejects.toThrow(
         'Invalid or expired nonce',
       );
@@ -371,15 +352,13 @@ describe('AuthService', () => {
       const nonce = 'reused-nonce';
       const signature = keypair.sign(Buffer.from(nonce)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
       };
 
-      jest
-        .spyOn(nonceService, 'findAndValidateNonce')
-        .mockResolvedValue(null); // Nonce already used or expired
+      jest.spyOn(nonceService, 'findAndValidateNonce').mockResolvedValue(null); // Nonce already used or expired
 
       await expect(service.verify(dto)).rejects.toThrow(
         new UnauthorizedException('Invalid or expired nonce'),
@@ -402,19 +381,15 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature: invalidSignature,
         message,
       };
 
       // Should throw due to invalid signature before checking nonce
-      await expect(service.verify(dto)).rejects.toThrow(
-        UnauthorizedException,
-      );
-      await expect(service.verify(dto)).rejects.toThrow(
-        'Invalid signature',
-      );
+      await expect(service.verify(dto)).rejects.toThrow(UnauthorizedException);
+      await expect(service.verify(dto)).rejects.toThrow('Invalid signature');
     });
 
     it('should throw when signature is from wrong keypair', async () => {
@@ -423,16 +398,14 @@ describe('AuthService', () => {
       const message = 'test-message';
       const signature = keypair1.sign(Buffer.from(message)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair2.publicKey(),
         signature,
         message,
       };
 
       // Should throw due to signature verification failure
-      await expect(service.verify(dto)).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(service.verify(dto)).rejects.toThrow(UnauthorizedException);
     });
   });
 
@@ -451,7 +424,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -460,7 +433,7 @@ describe('AuthService', () => {
       const user: User = {
         id: 'user-uuid-1',
         publicKey: keypair.publicKey(),
-        username: null,
+        displayName: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -503,7 +476,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -512,7 +485,7 @@ describe('AuthService', () => {
       const newUser: User = {
         id: 'user-uuid-new',
         publicKey: keypair.publicKey(),
-        username: null,
+        displayName: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -533,4 +506,3 @@ describe('AuthService', () => {
     });
   });
 });
-

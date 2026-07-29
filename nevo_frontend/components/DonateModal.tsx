@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { signTransaction } from '@stellar/freighter-api';
 import {
   Networks,
@@ -11,6 +11,7 @@ import { Server } from '@stellar/stellar-sdk/rpc';
 import { useWalletStore } from '@/src/store/walletStore';
 import { useDonationsStore } from '@/src/store/donationsStore';
 import { contractService } from '@/lib/contract-service';
+import { parseApiError } from '@/lib/errors';
 import type { Pool } from '@/src/store/poolsStore';
 import { WalletAddress } from './WalletAddress';
 
@@ -39,13 +40,20 @@ type Step = 'form' | 'loading' | 'success' | 'error';
 const MIN_AMOUNT = 1;
 const MAX_AMOUNT = 100_000;
 const TX_FEE_XLM = '0.00001';
+const FOCUSABLE_SELECTOR =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 interface DonateModalProps {
   pool: Pool;
   onClose: () => void;
+  onDonationSuccess?: () => void;
 }
 
-export function DonateModal({ pool, onClose }: DonateModalProps) {
+export function DonateModal({
+  pool,
+  onClose,
+  onDonationSuccess,
+}: DonateModalProps) {
   const { publicKey, balances } = useWalletStore();
   const { addDonation } = useDonationsStore();
 
@@ -56,21 +64,66 @@ export function DonateModal({ pool, onClose }: DonateModalProps) {
   const [lastTxHash, setLastTxHash] = useState('');
   const [txHash, setTxHash] = useState('');
   const backdropRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  const trapFocus = useCallback((e: KeyboardEvent) => {
+    if (!dialogRef.current) return;
+
+    const focusable = Array.from(
+      dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+    );
+
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.key === 'Tab') {
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
 
   // Focus amount input on open
   useEffect(() => {
-    inputRef.current?.focus();
+    triggerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+
+    const focusable =
+      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+    const first = focusable?.[0];
+    first?.focus();
   }, []);
 
-  // Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+
+      trapFocus(e);
     }
+
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, trapFocus]);
+
+  useEffect(() => {
+    return () => {
+      triggerRef.current?.focus();
+    };
+  }, []);
 
   const availableBalance =
     asset === 'XLM' ? (balances?.xlm ?? '0') : (balances?.usdc ?? '0');
@@ -90,6 +143,7 @@ export function DonateModal({ pool, onClose }: DonateModalProps) {
     if (!amountValid || !publicKey) return;
 
     setStep('loading');
+    setErrorMsg('');
 
     try {
       // Build the unsigned XDR from the contract service
@@ -107,7 +161,7 @@ export function DonateModal({ pool, onClose }: DonateModalProps) {
       });
 
       if (signResult.error) {
-        setErrorMsg('Donation cancelled.');
+        setErrorMsg(signResult.error || 'Donation cancelled.');
         setStep('error');
         return;
       }
@@ -130,16 +184,28 @@ export function DonateModal({ pool, onClose }: DonateModalProps) {
       setTxHash(hash);
       setLastTxHash(hash);
       setStep('success');
+      onDonationSuccess?.();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Transaction failed.';
+      console.error(err);
+      const msg = parseApiError(err);
       if (
         msg.toLowerCase().includes('cancel') ||
         msg.toLowerCase().includes('reject') ||
         msg.toLowerCase().includes('declined')
       ) {
         setErrorMsg('Donation cancelled.');
+      } else if (msg.toLowerCase().includes('closed')) {
+        setErrorMsg('Pool is closed.');
+      } else if (
+        msg.toLowerCase().includes('insufficient') ||
+        msg.toLowerCase().includes('balance') ||
+        msg.toLowerCase().includes('underfunded')
+      ) {
+        setErrorMsg('Insufficient balance.');
       } else {
-        setErrorMsg(msg);
+        setErrorMsg(
+          msg || 'Transaction rejected by the network. Please try again.'
+        );
       }
       setStep('error');
     }
@@ -160,7 +226,11 @@ export function DonateModal({ pool, onClose }: DonateModalProps) {
         aria-hidden="true"
       />
 
-      <div className="relative w-full max-w-md max-h-[100dvh] rounded-t-2xl sm:rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl overflow-y-auto">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="relative w-full max-w-md max-h-[100dvh] rounded-t-2xl sm:rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl overflow-y-auto"
+      >
         {/* Header */}
         <div className="mb-5 flex items-start justify-between gap-3">
           <div>

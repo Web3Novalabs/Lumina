@@ -1,34 +1,49 @@
-import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsNumber,
+  IsNotEmpty,
+  IsNumberString,
   IsOptional,
   IsString,
-  IsUrl,
   MaxLength,
-  Min,
-  MinLength,
 } from 'class-validator';
 
 export class CreatePoolDto {
+  @ApiProperty({ description: 'Pool id assigned by the contract on-chain.' })
   @IsString()
-  @MinLength(3)
+  @IsNotEmpty()
+  contractPoolId: string;
+
+  @ApiProperty({ description: 'Stellar public key (G...) of the creator.' })
+  @IsString()
+  @IsNotEmpty()
+  creatorWallet: string;
+
+  @ApiProperty({ maxLength: 100 })
+  @IsString()
+  @IsNotEmpty()
   @MaxLength(100)
   title: string;
 
+  @ApiProperty({ maxLength: 1000 })
   @IsString()
-  @MinLength(10)
-  @MaxLength(2000)
+  @IsNotEmpty()
+  @MaxLength(1000)
   description: string;
 
-  @IsString()
-  category: string;
+  @ApiProperty({
+    description: 'Fundraising target, as a numeric string in stroops.',
+    example: '1000000000',
+  })
+  @IsNumberString()
+  goal: string;
 
-  @Type(() => Number)
-  @IsNumber()
-  @Min(1)
-  goal: number;
-
+  @ApiPropertyOptional()
   @IsOptional()
-  @IsUrl()
-  imageUrl?: string;
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  imageUrl?: string | null;
 }

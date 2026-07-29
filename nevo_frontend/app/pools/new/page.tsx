@@ -3,11 +3,12 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { createPool } from '@/lib/api-client';
+import { createPool, submitSignedXdr, ApiError } from '@/lib/api-client';
 import { signTransaction } from '@stellar/freighter-api';
 import { contractService } from '@/lib/contract-service';
-import { createPool, submitSignedXdr } from '@/lib/api-client';
 import { useWalletStore } from '@/src/store/walletStore';
+import { parseApiError } from '@/lib/errors';
+
 import {
   validateFormData,
   validateImageFile,
@@ -125,11 +126,11 @@ function CreatePoolPageContent() {
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<FormErrors>({});
+  const [submitErrorDismissed, setSubmitErrorDismissed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitStep, setSubmitStep] = useState<
     'idle' | 'creating' | 'signing' | 'submitting'
   >('idle');
-  const [submitted, setSubmitted] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState('');
   const [cropPreviewUrl, setCropPreviewUrl] = useState('');
@@ -278,6 +279,7 @@ function CreatePoolPageContent() {
     setSubmitting(true);
     setSubmitStep('creating');
     setErrors({});
+    setSubmitErrorDismissed(false);
     try {
       if (imageFile && !form.imageUrl) {
         await applyCropAndOptimize();
@@ -288,71 +290,79 @@ function CreatePoolPageContent() {
           'Wallet not connected. Please connect your wallet first.'
         );
       }
-      const goalInStroops = BigInt(
-        Math.round(parseFloat(form.goalAmount) * 1e7)
-      );
-      const xdr = await contractService.buildCreatePoolTransaction(
-        publicKey,
-        form.title,
-        form.description,
-        goalInStroops
-      );
+
+      // First call createPool API to get poolId and unsignedXdr (handle validation errors here)
+      let createPoolResult;
+      try {
+        createPoolResult = await createPool({
+          title: form.title,
+          description: form.description,
+          category: form.category,
+          goalAmount: form.goalAmount,
+          duration: form.duration,
+          imageUrl: form.imageUrl,
+          tags: form.tags,
+        });
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 400) {
+          // Handle validation errors
+          const errorData = err.data as Record<string, string[]>;
+          const validationErrors: FormErrors = {};
+
+          // Map API error fields to form fields
+          Object.entries(errorData).forEach(([key, messages]) => {
+            const fieldKey = key as keyof FormErrors;
+            validationErrors[fieldKey] = messages[0];
+          });
+
+          setErrors(validationErrors);
+          // If it's a validation error, go back to the appropriate step
+          if (
+            validationErrors.title ||
+            validationErrors.description ||
+            validationErrors.category
+          ) {
+            setStep(1);
+          } else if (validationErrors.goalAmount || validationErrors.duration) {
+            setStep(2);
+          }
+          setSubmitting(false);
+          setSubmitStep('idle');
+          return;
+        }
+        throw err;
+      }
+
+      // Call Freighter's signTransaction with unsignedXdr
       setSubmitStep('signing');
-      const signedResult = await signTransaction(xdr, {
+      const signedResult = await signTransaction(createPoolResult.unsignedXdr, {
         networkPassphrase:
           process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
           'Test SDF Network ; September 2015',
       });
       if (signedResult.error) {
+        // Check if it's a rejection
+        if (
+          signedResult.error.toLowerCase().includes('cancelled') ||
+          signedResult.error.toLowerCase().includes('denied')
+        ) {
+          throw new Error('Transaction cancelled');
+        }
         throw new Error(signedResult.error);
       }
+
+      // Submit signed XDR
       setSubmitStep('submitting');
       await submitSignedXdr(signedResult.signedTxXdr);
 
-      // Save pool metadata to the backend database
-      // New pool ID = current pool count + 1 (contract auto-increments)
-      const poolCount = await contractService.getPoolCount();
-      // Fall back to a unique prefixed ID if RPC is unavailable;
-      // the backend sync service will reconcile on-chain data later.
-      const contractPoolId =
-        poolCount >= 0 ? String(poolCount + 1) : `local-${Date.now()}`;
-      await createPool({
-        contractPoolId,
-        creatorWallet: publicKey,
-        goal: goalInStroops.toString(),
-        title: form.title,
-        description: form.description,
-        category: form.category,
-        imageUrl: form.imageUrl || undefined,
-      });
-
-      setSubmitted(true);
+      // Redirect to the newly created pool's page after successful submission
+      router.push(`/pools/${createPoolResult.id}`);
     } catch (error) {
-      const err = error as Error;
-      setErrors({ submit: err?.message || 'Failed to submit transaction.' });
+      setErrors({ submit: parseApiError(error) });
     } finally {
       setSubmitting(false);
       setSubmitStep('idle');
     }
-    try {
-      await createPool({
-        title: form.title,
-        description: form.description,
-        category: form.category,
-        goalAmount: form.goalAmount,
-        duration: form.duration,
-        imageUrl: form.imageUrl,
-        tags: form.tags,
-      });
-    } catch {
-      // TODO: surface error to user once error UI is designed
-    }
-    setSubmitting(false);
-    setSubmitted(true);
-  }
-
-  if (submitted) {
-    return <SuccessScreen onGoToDashboard={() => router.push('/dashboard')} />;
   }
 
   const tagList = form.tags
@@ -407,6 +417,8 @@ function CreatePoolPageContent() {
             submitting={submitting}
             submitStep={submitStep}
             errors={errors}
+            submitErrorDismissed={submitErrorDismissed}
+            onDismissSubmitError={() => setSubmitErrorDismissed(true)}
             onBack={handleBack}
             onSubmit={handleSubmit}
           />
@@ -793,6 +805,8 @@ interface Step3Props {
   submitting: boolean;
   submitStep: 'idle' | 'creating' | 'signing' | 'submitting';
   errors?: FormErrors;
+  submitErrorDismissed: boolean;
+  onDismissSubmitError: () => void;
   onBack: () => void;
   onSubmit: () => void;
 }
@@ -803,6 +817,8 @@ function Step3({
   submitting,
   submitStep,
   errors,
+  submitErrorDismissed,
+  onDismissSubmitError,
   onBack,
   onSubmit,
 }: Step3Props) {
@@ -901,34 +917,34 @@ function Step3({
           )}
         </button>
       </div>
-      {errors?.submit && (
-        <div className="mt-4 p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-500 text-sm text-center">
-          {errors.submit}
+      {errors?.submit && !submitErrorDismissed && (
+        <div className="mt-4 p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-500 text-sm flex items-center justify-between gap-2">
+          <span>{errors.submit}</span>
+          <button
+            type="button"
+            onClick={onDismissSubmitError}
+            className="hover:opacity-80 transition-opacity"
+            aria-label="Dismiss error"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              className="size-4"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
         </div>
       )}
     </div>
-  );
-}
-
-/* ── Success screen ───────────────────────────────────────────────────────── */
-
-function SuccessScreen({ onGoToDashboard }: { onGoToDashboard: () => void }) {
-  return (
-    <main className="mx-auto max-w-2xl px-6 py-24 text-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="flex size-16 items-center justify-center rounded-full bg-success-light text-success">
-          <CheckCircleIcon />
-        </div>
-        <h1 className="text-2xl font-bold">Pool Created!</h1>
-        <p className="text-[var(--color-text-muted)] max-w-sm">
-          Your donation pool has been created successfully. Share it with your
-          community to start receiving contributions.
-        </p>
-        <button onClick={onGoToDashboard} className={`mt-4 ${primaryBtn}`}>
-          Go to Dashboard
-        </button>
-      </div>
-    </main>
   );
 }
 

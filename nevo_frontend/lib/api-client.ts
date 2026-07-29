@@ -8,9 +8,13 @@ import {
   parseRetryAfterHeader,
   resolveRateLimitOptions,
 } from './rate-limit';
-import { getStoredAccessToken } from './jwt-storage';
+import { env, validatePublicEnv } from './env';
+import { getToken } from './auth-storage';
+import { toast } from '../components/Toast';
 
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+validatePublicEnv();
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 export interface RequestConfig extends Omit<RequestInit, 'method' | 'body'> {
   params?: Record<string, string | number | boolean | undefined>;
@@ -34,6 +38,13 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+export class UnauthorizedError extends ApiError {
+  constructor(message: string, data?: unknown) {
+    super(401, message, data);
+    this.name = 'UnauthorizedError';
   }
 }
 
@@ -68,13 +79,10 @@ export class ApiClient {
 
   constructor(
     baseURL: string = '',
-    defaultTimeout: number = 15000,
+    defaultTimeout: number = 10_000,
     rateLimit: Partial<RateLimitOptions> = DEFAULT_RATE_LIMIT_OPTIONS
   ) {
-    this.baseURL =
-      baseURL ||
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      'http://localhost:3000';
+    this.baseURL = baseURL || env.NEXT_PUBLIC_API_BASE_URL;
     this.defaultTimeout = defaultTimeout;
     this.defaultRateLimit = resolveRateLimitOptions(rateLimit);
     this.rateLimiter = new ClientRateLimiter();
@@ -91,7 +99,7 @@ export class ApiClient {
     }
 
     const headers = new Headers(config.headers);
-    const accessToken = getStoredAccessToken();
+    const accessToken = getToken();
 
     if (accessToken) {
       headers.set('Authorization', `Bearer ${accessToken}`);
@@ -391,6 +399,14 @@ export class ApiClient {
             } catch {
               errorData = await response.text();
             }
+            if (response.status >= 500 && response.status < 600) {
+              if (typeof window !== 'undefined') {
+                toast('Something went wrong. Please try again.', 'error');
+              }
+            }
+            if (response.status === 401) {
+              throw new UnauthorizedError(response.statusText, errorData);
+            }
             throw new ApiError(response.status, response.statusText, errorData);
           }
 
@@ -478,13 +494,13 @@ export {
 
 export interface ApiDonation {
   id: string;
-  poolId: string;
-  poolName: string;
+  type: 'donation' | 'pool_creation' | 'withdrawal';
   amount: string;
-  asset: 'XLM' | 'USDC';
+  asset: string;
+  recipient: string;
+  date: string;
+  status: 'completed' | 'pending' | 'failed';
   txHash: string;
-  timestamp: string;
-  status: 'pending' | 'confirmed' | 'failed';
 }
 
 export interface ApiProfile {
@@ -493,12 +509,22 @@ export interface ApiProfile {
   createdAt: string;
 }
 
-export function fetchMyDonations(): Promise<ApiDonation[]> {
-  return apiClient.get<ApiDonation[]>('/users/me/donations');
+export function fetchMyDonations(limit?: number): Promise<ApiDonation[]> {
+  return apiClient.get<ApiDonation[]>(
+    '/users/me/donations',
+    limit ? { params: { limit } } : undefined
+  );
 }
 
 export function fetchMyProfile(): Promise<ApiProfile> {
   return apiClient.get<ApiProfile>('/users/me');
+}
+
+export function updateProfile(displayName: string): Promise<ApiProfile> {
+  return apiClient.request<ApiProfile>('/users/me', 'PATCH', {
+    body: { displayName },
+    requireAuth: true,
+  });
 }
 
 export interface CreatePoolPayload {
@@ -516,7 +542,7 @@ export interface CreatePoolResponse {
   unsignedXdr: string;
 }
 
-export function createPool(
+export async function createPool(
   payload: CreatePoolPayload
 ): Promise<CreatePoolResponse> {
   return apiClient.post<CreatePoolResponse>('/pools', payload);
@@ -538,4 +564,41 @@ export async function closePool(
       requireAuth: true,
     }
   );
+}
+
+export async function withdrawPool(
+  poolId: string | number
+): Promise<{ unsignedXdr: string }> {
+  return apiClient.post<{ unsignedXdr: string }>(
+    `/pools/${poolId}/withdraw`,
+    undefined,
+    {
+      requireAuth: true,
+    }
+  );
+}
+
+export function verifyAuthSignature(
+  publicKey: string,
+  nonce: string,
+  signature: string
+): Promise<{ accessToken: string }> {
+  return apiClient.post<{ accessToken: string }>('/auth/verify', {
+    publicKey,
+    signature,
+    message: nonce,
+  });
+}
+
+export interface AuthChallenge {
+  nonce: string;
+  expiresAt: number;
+}
+
+export function fetchAuthChallenge(publicKey: string): Promise<AuthChallenge> {
+  return apiClient.get<AuthChallenge>('/auth/challenge', {
+    params: { publicKey },
+    requireAuth: false,
+    cacheResponse: false,
+  });
 }

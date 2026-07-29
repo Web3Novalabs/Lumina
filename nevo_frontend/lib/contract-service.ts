@@ -55,6 +55,11 @@ class ContractService {
     }
   }
 
+  /**
+   * Builds an XDR-encoded transaction to create a new donation pool.
+   *
+   * @param goal - Fundraising goal in stroops (1 XLM = 10,000,000 stroops).
+   */
   async buildCreatePoolTransaction(
     creator: string,
     title: string,
@@ -83,6 +88,11 @@ class ContractService {
     return prepared.toXDR();
   }
 
+  /**
+   * Builds an XDR-encoded transaction to donate to a pool.
+   *
+   * @param amount - Donation amount in stroops (1 XLM = 10,000,000 stroops).
+   */
   async buildDonateTransaction(
     poolId: number,
     donor: string,
@@ -109,6 +119,7 @@ class ContractService {
     return prepared.toXDR();
   }
 
+  /** Builds an XDR-encoded transaction to withdraw unallocated funds from a pool. */
   async buildWithdrawTransaction(
     poolId: number,
     creator: string,
@@ -126,6 +137,27 @@ class ContractService {
           nativeToScVal(poolId, { type: 'u32' }),
           new Address(tokenAddress).toScVal()
         )
+      )
+      .setTimeout(TX_TIMEOUT)
+      .build();
+
+    const prepared = await this.server.prepareTransaction(tx);
+    return prepared.toXDR();
+  }
+
+  /** Builds an XDR-encoded transaction to close a pool permanently. */
+  async buildClosePoolTransaction(
+    poolId: number,
+    creator: string
+  ): Promise<string> {
+    const contract = new Contract(getContractId());
+    const account = await this.server.getAccount(creator);
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        contract.call('close_pool', nativeToScVal(poolId, { type: 'u32' }))
       )
       .setTimeout(TX_TIMEOUT)
       .build();
