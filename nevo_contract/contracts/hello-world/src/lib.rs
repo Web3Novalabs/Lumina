@@ -779,7 +779,11 @@ impl Contract {
                     .unwrap_or(String::from_str(&env, ""));
 
                 if status == approved_str || status == pending_str {
-                    let claim_key = (CLAIMED_AMOUNT_PREFIX, pool_id, student.clone());
+                    let claim_key = (
+                        Symbol::new(&env, CLAIMED_AMOUNT_PREFIX),
+                        pool_id,
+                        student.clone(),
+                    );
                     let application: Application = env
                         .storage()
                         .persistent()
