@@ -1,7 +1,8 @@
 #![cfg_attr(not(test), no_std)]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env, String,
+    Symbol, Vec,
 };
 
 // Storage key constants
@@ -54,6 +55,7 @@ const DONATION_MADE: Symbol = symbol_short!("donation");
 const CONTRIBUTION: Symbol = symbol_short!("contrib");
 const POOL_CLOSED: Symbol = symbol_short!("pool_cls");
 const APPLICATION_SUBMITTED: Symbol = symbol_short!("app_sub");
+const SCHOOL_REGISTERED: Symbol = symbol_short!("schl_reg");
 
 // Helper functions for timestamp/deadline edge-case tests
 // These are deterministic, test-oriented helpers used by unit tests
@@ -169,31 +171,44 @@ impl Contract {
         env.storage().persistent().set(&admin_key, &admin);
     }
 
-    /// Register a school by admin authorization.
-    pub fn register_school(env: Env, admin: Address, school: Address) {
-        admin.require_auth();
-
+    /// Register a school's on-chain identity mapping.
+    ///
+    /// Only the root protocol admin (set via [`Contract::set_admin`]) may call
+    /// this. The `metadata_hash` is a 32-byte digest of the accredited body's
+    /// off-chain metadata and is written to persistent ledger storage keyed by
+    /// `school_addr`. Registering an already-registered school overwrites its
+    /// metadata hash, allowing efficient in-place updates.
+    pub fn register_school(env: Env, school_addr: Address, metadata_hash: BytesN<32>) {
         let admin_key = Symbol::new(&env, ADMIN_KEY);
-        let stored_admin: Address = env
+        let admin: Address = env
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
             .expect("Admin not set");
-        if stored_admin != admin {
-            panic!("Unauthorized admin");
-        }
 
-        let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school);
-        env.storage().persistent().set(&school_key, &true);
+        // Enforce root protocol admin authorization.
+        admin.require_auth();
+
+        let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school_addr.clone());
+        env.storage().persistent().set(&school_key, &metadata_hash);
+
+        env.events()
+            .publish((SCHOOL_REGISTERED, school_addr), metadata_hash);
     }
 
     /// Check if a school has been registered.
     pub fn is_school_registered(env: Env, school: Address) -> bool {
         let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school);
+        env.storage().persistent().has(&school_key)
+    }
+
+    /// Return the metadata hash recorded for a registered school.
+    pub fn get_school_metadata(env: Env, school: Address) -> BytesN<32> {
+        let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school);
         env.storage()
             .persistent()
-            .get::<_, bool>(&school_key)
-            .unwrap_or(false)
+            .get::<_, BytesN<32>>(&school_key)
+            .expect("School not registered")
     }
 
     // ─── Pool Management ─────────────────────────────────────────────────────
@@ -1215,3 +1230,4 @@ impl Contract {
 
 mod test;
 mod test_issues;
+mod test_register_school;
