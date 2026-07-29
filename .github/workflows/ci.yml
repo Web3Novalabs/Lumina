@@ -10,4 +10,4 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: Check compilation
-        run: cargo check --manifest-path nevo_contract/contracts/hello-world/Cargo.toml --target wasm32-unknown-unknown
+        run: cd nevo_contract && cargo check -p hello-world --target wasm32-unknown-unknown
