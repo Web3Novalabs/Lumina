@@ -44,6 +44,10 @@ dist/
 !Agents.md
 !SECURITY.md
 !security.md
+!ERRORS.md
+!EVENT_EMISSION_TESTS.md
+!EVENTS_REFERENCE.md
+!CONFIGURATION_BOUNDS_TESTS.md
 !docs/pools-page.md
 
 # Local plans — not committed, stays on each contributor's machine
