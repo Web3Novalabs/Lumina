@@ -31,6 +31,9 @@ jobs:
           NEXT_PUBLIC_STELLAR_NETWORK: testnet
         run: npm run build
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Check for remaining mock data
         working-directory: ./nevo_frontend
         run: |
