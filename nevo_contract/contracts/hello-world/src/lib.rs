@@ -7,11 +7,6 @@ use soroban_sdk::{
 
 // Storage key constants
 const POOL_COUNT: &str = "pool_count";
-const POOL_PREFIX: &str = "p";
-const CREATOR_SUFFIX: &str = "_creator";
-const GOAL_SUFFIX: &str = "_goal";
-const COLLECTED_SUFFIX: &str = "_collected";
-const CLOSED_SUFFIX: &str = "_closed";
 const APPLICATION_COUNT_PREFIX: &str = "a_count_";
 const APPLICATION_PREFIX: &str = "a_";
 const APPLICANT_PREFIX: &str = "ap_";
