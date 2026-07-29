@@ -2,8 +2,10 @@
 
 import React, { useState } from "react";
 import { X, DollarSign, Wallet } from "lucide-react";
+import { toast } from "sonner";
 import { executeDonation } from "../lib/stellar";
 import { getPublicKey } from "../app/stellar-wallets-kit";
+import { useApiError } from "../lib/hooks/useApiError";
 import { DonationReceipt } from "./DonationReceipt";
 
 interface DonationModalProps {
@@ -23,6 +25,7 @@ export const DonationModal: React.FC<DonationModalProps> = ({
   poolId,
   contractId,
 }) => {
+  const { handleError } = useApiError();
   const [amount, setAmount] = useState<string>("");
   const [asset, setAsset] = useState<Asset>("XLM");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -69,8 +72,7 @@ export const DonationModal: React.FC<DonationModalProps> = ({
         setShowReceipt(true);
       }
     } catch (error) {
-      console.error("Donation failed:", error);
-      alert("Transaction failed. Please try again.");
+      handleError(error, "Transaction failed. Please try again.");
     } finally {
       setIsProcessing(false);
     }

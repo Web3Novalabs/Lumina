@@ -5,17 +5,25 @@ import { getPublicKey, connect, disconnect } from "../app/stellar-wallets-kit";
 import { getAccountBalances, AccountBalances } from "../lib/stellar";
 import { LogOut, Wallet } from "lucide-react";
 import { toast } from "sonner";
+import { useApiError } from "../lib/hooks/useApiError";
 
 export default function ConnectWallet() {
+  const { handleError } = useApiError();
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [balances, setBalances] = useState<AccountBalances | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function updateState(key: string | null) {
     if (key) {
-      setPublicKey(key);
-      const bals = await getAccountBalances(key);
-      setBalances(bals);
+      try {
+        setPublicKey(key);
+        const bals = await getAccountBalances(key);
+        setBalances(bals);
+      } catch (error) {
+        handleError(error, "Failed to load account balances. Please try again.");
+        setPublicKey(null);
+        setBalances(null);
+      }
     } else {
       setPublicKey(null);
       setBalances(null);

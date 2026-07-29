@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Camera, UserCircle } from "lucide-react";
 import Image from "next/image";
 import { toast } from "sonner";
+import { useApiError } from "@/lib/hooks/useApiError";
 
 // Dummy initial profile
 const defaultProfile = {
@@ -17,6 +18,7 @@ const defaultProfile = {
 };
 
 export default function ProfileSettingsPage() {
+  const { handleError } = useApiError();
   const [isClient, setIsClient] = useState(false);
   const [profile, setProfile] = useState<{ displayName: string; avatarUrl: string }>(defaultProfile);
   const [formData, setFormData] = useState({ displayName: "", avatarUrl: "" });
@@ -25,26 +27,31 @@ export default function ProfileSettingsPage() {
   useEffect(() => {
     setIsClient(true);
     // On component mount, attempt to retrieve from localStorage
-    const storedStr = localStorage.getItem("nevo_user_profile");
-    if (storedStr) {
-      try {
+    try {
+      const storedStr = localStorage.getItem("nevo_user_profile");
+      if (storedStr) {
         const stored = JSON.parse(storedStr);
         setProfile(stored);
         setFormData(stored);
-      } catch {
+      } else {
         setFormData(defaultProfile);
       }
-    } else {
+    } catch (error) {
+      handleError(error, "Failed to load profile settings.");
       setFormData(defaultProfile);
     }
-  }, []);
+  }, [handleError]);
 
   const handleSave = () => {
     // Save to LocalStorage
-    localStorage.setItem("nevo_user_profile", JSON.stringify(formData));
-    setProfile(formData);
-    setIsEditing(false);
-    toast.success("Profile saved successfully!");
+    try {
+      localStorage.setItem("nevo_user_profile", JSON.stringify(formData));
+      setProfile(formData);
+      setIsEditing(false);
+      toast.success("Profile saved successfully!");
+    } catch (error) {
+      handleError(error, "Failed to save profile. Please try again.");
+    }
   };
 
   const handleCancel = () => {
