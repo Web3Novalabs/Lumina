@@ -2,11 +2,18 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { signTransaction } from '@stellar/freighter-api';
 import { useWalletStore } from '@/src/store/walletStore';
 import { EmptyState } from '@/components/EmptyState';
 import { WalletAddress } from '@/components/WalletAddress';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { apiClient } from '@/lib/api-client';
+import {
+  apiClient,
+  withdrawPool,
+  closePool,
+  submitSignedXdr,
+} from '@/lib/api-client';
+import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
 
 type ActionModal =
@@ -19,6 +26,7 @@ function DashboardPageContent() {
   const [pools, setPools] = useState<Pool[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
+  const [confirming, setConfirming] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -184,9 +192,49 @@ function DashboardPageContent() {
         <ConfirmModal
           modal={actionModal}
           onClose={() => setActionModal(null)}
-          onConfirm={() => {
-            // TODO: wire to real withdraw / archive contract calls
-            setActionModal(null);
+          confirming={confirming}
+          onConfirm={async () => {
+            const modal = actionModal;
+            setConfirming(true);
+            try {
+              const { unsignedXdr } =
+                modal.type === 'withdraw'
+                  ? await withdrawPool(modal.pool.id)
+                  : await closePool(modal.pool.id);
+
+              const signedResult = await signTransaction(unsignedXdr, {
+                networkPassphrase:
+                  process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                  'Test SDF Network ; September 2015',
+              });
+
+              if (signedResult.error) {
+                throw new Error(signedResult.error);
+              }
+
+              await submitSignedXdr(signedResult.signedTxXdr);
+
+              toast(
+                modal.type === 'withdraw'
+                  ? 'Withdrawal successful'
+                  : 'Pool archived successfully'
+              );
+
+              setPools((prev) =>
+                modal.type === 'withdraw'
+                  ? prev
+                  : prev.filter((p) => p.id !== modal.pool.id)
+              );
+              setActionModal(null);
+            } catch (err: unknown) {
+              const error = err as Error;
+              toast(
+                error.message || 'Action failed. Please try again.',
+                'error'
+              );
+            } finally {
+              setConfirming(false);
+            }
           }}
         />
       )}
@@ -335,10 +383,12 @@ function ConfirmModal({
   modal,
   onClose,
   onConfirm,
+  confirming,
 }: {
   modal: NonNullable<ActionModal>;
   onClose: () => void;
   onConfirm: () => void;
+  confirming: boolean;
 }) {
   const isWithdraw = modal.type === 'withdraw';
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -422,15 +472,21 @@ function ConfirmModal({
         <div className="mt-5 flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+            disabled={confirming}
+            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
+            disabled={confirming}
+            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60 disabled:cursor-not-allowed ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
           >
-            {isWithdraw ? 'Confirm Withdraw' : 'Archive'}
+            {confirming
+              ? 'Processing…'
+              : isWithdraw
+                ? 'Confirm Withdraw'
+                : 'Archive'}
           </button>
         </div>
       </div>
