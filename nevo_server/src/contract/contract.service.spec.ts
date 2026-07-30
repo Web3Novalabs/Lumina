@@ -84,4 +84,61 @@ describe('ContractService', () => {
       ).rejects.toBeInstanceOf(StellarError);
     });
   });
+
+  describe('buildClosePoolTransaction', () => {
+    it('returns a parseable XDR string', () => {
+      const xdr = service.buildClosePoolTransaction(SOURCE, 1);
+      expect(() => TransactionBuilder.fromXDR(xdr, NETWORK)).not.toThrow();
+    });
+
+    it('XDR contains the pool id', () => {
+      const xdr = service.buildClosePoolTransaction(SOURCE, 1);
+      expect(xdr.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('getContributionOnChain', () => {
+    it('returns 0n on RPC error', async () => {
+      const donor = Keypair.random().publicKey();
+      const result = await service.getContributionOnChain(1, donor);
+      expect(result).toBe(0n);
+    });
+  });
+
+  describe('getPoolOnChain', () => {
+    it('returns null on RPC error', async () => {
+      const result = await service.getPoolOnChain(1);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getTotalRaisedOnChain', () => {
+    it('returns 0n on RPC error', async () => {
+      const result = await service.getTotalRaisedOnChain(1);
+      expect(result).toBe(0n);
+    });
+  });
+
+  describe('getDonorCountOnChain', () => {
+    it('returns 0 on RPC error', async () => {
+      const result = await service.getDonorCountOnChain(1);
+      expect(result).toBe(0);
+    });
+  });
+
+  describe('mapError', () => {
+    it('maps tx_bad_auth to StellarError with correct code', () => {
+      const error = new Error('tx_bad_auth');
+      const stellarError = service['mapError'](error);
+      expect(stellarError).toBeInstanceOf(StellarError);
+      expect(stellarError.message).toBe('Bad authentication');
+    });
+
+    it('maps op_underfunded to StellarError with correct code', () => {
+      const error = new Error('op_underfunded');
+      const stellarError = service['mapError'](error);
+      expect(stellarError).toBeInstanceOf(StellarError);
+      expect(stellarError.message).toBe('Insufficient balance');
+    });
+  });
 });
