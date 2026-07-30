@@ -7,6 +7,7 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { Avatar } from '@/components/Avatar';
 import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
+import { getDonorCount } from '@/lib/getDonorCount';
 
 type SortMetric = 'raised' | 'target' | 'progress' | 'donors';
 
@@ -15,16 +16,6 @@ export default function PoolComparePage() {
   const [selectedPools, setSelectedPools] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<SortMetric>('raised');
   const [isComparing, setIsComparing] = useState(false);
-
-  // Calculate donor count for a pool
-  const getDonorCount = (pool: Pool): number => {
-    if (pool.id === '1') return 42;
-    if (pool.id === '2') return 87;
-    if (pool.id === '3') return 31;
-    if (pool.id === '4') return 15;
-    if (pool.id === '5') return 5;
-    return Math.floor((pool.raised * 7.3) / 100) + 1;
-  };
 
   // Sort pools in comparison by selected metric
   const sortedComparisonPools = useMemo(() => {
