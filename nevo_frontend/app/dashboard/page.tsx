@@ -9,6 +9,7 @@ import { WalletAddress } from '@/components/WalletAddress';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
+import { signTransaction } from '@stellar/freighter-api';
 
 // TODO: Replace with real API call once backend pool endpoints are implemented
 const MOCK_CREATOR_POOLS: Pool[] = [
@@ -69,6 +70,19 @@ function DashboardPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const loadPools = useCallback(async () => {
+    if (!publicKey) return;
+    setLoadingPools(true);
+    try {
+      const data = await apiClient.get<Pool[]>(`/pools?creator=${publicKey}`);
+      setPools(data ?? []);
+    } catch {
+      setPools([]);
+    } finally {
+      setLoadingPools(false);
+    }
+  }, [publicKey]);
 
   useEffect(() => {
     initialize();
@@ -186,10 +200,7 @@ function DashboardPageContent() {
           <button
             className="rounded-lg border border-[var(--color-border)] px-3 py-1 hover:bg-[var(--color-border)] transition-colors"
             aria-label="Archive selected pools"
-            onClick={() => {
-              // TODO: bulk archive action
-              setSelectedIds(new Set());
-            }}
+            onClick={archiveSelectedPools}
           >
             Archive selected
           </button>
@@ -257,9 +268,47 @@ function DashboardPageContent() {
         <ConfirmModal
           modal={actionModal}
           onClose={() => setActionModal(null)}
-          onConfirm={() => {
-            // TODO: wire to real withdraw / archive contract calls
-            setActionModal(null);
+          onConfirm={async () => {
+            if (!actionModal) return;
+
+            try {
+              if (actionModal.type === 'withdraw') {
+                const { unsignedXdr } = await withdrawPool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Withdrawal successful');
+              } else {
+                const { unsignedXdr } = await closePool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Pool archived successfully');
+              }
+            } catch (err: unknown) {
+              const error = err as Error;
+              toast(error.message || 'Failed to complete action', 'error');
+              console.error(error);
+            } finally {
+              setActionModal(null);
+              void loadPools();
+            }
           }}
         />
       )}
