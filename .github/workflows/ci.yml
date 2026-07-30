@@ -1,18 +1,8 @@
 name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+on: [push, pull_request]
 jobs:
-  frontend:
-    name: Frontend — Build
+  build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./nevo_frontend
     steps:
       - uses: actions/checkout@v4
 
