@@ -231,6 +231,15 @@ function PoolDetailPageContent() {
                 {pool.title}
               </h1>
               <StatusBadge status={pool.status} />
+              <CopyButton
+                text={
+                  typeof window !== 'undefined'
+                    ? window.location.href
+                    : `/pools/${pool.id}`
+                }
+                iconOnly
+                aria-label="Copy pool link"
+              />
             </div>
 
             <div className="mt-2 flex flex-wrap gap-3 text-sm text-[var(--color-text-muted)]">

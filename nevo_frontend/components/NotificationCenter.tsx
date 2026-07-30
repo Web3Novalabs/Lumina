@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useNotificationsStore } from '@/src/store/notificationsStore';
+import { ConfirmDialog } from './ConfirmDialog';
 
 export function NotificationCenter() {
   const {
@@ -13,6 +14,7 @@ export function NotificationCenter() {
     clearAll,
   } = useNotificationsStore();
   const [isOpen, setIsOpen] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -87,7 +89,7 @@ export function NotificationCenter() {
                 Mark all read
               </button>
               <button
-                onClick={() => clearAll()}
+                onClick={() => setShowClearConfirm(true)}
                 className="text-error hover:text-error-dark font-medium"
               >
                 Clear all
@@ -190,6 +192,19 @@ export function NotificationCenter() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={showClearConfirm}
+        title="Clear all notifications?"
+        message="This action cannot be undone. All your notifications will be permanently removed."
+        confirmLabel="Clear all"
+        variant="danger"
+        onConfirm={() => {
+          clearAll();
+          setShowClearConfirm(false);
+        }}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </div>
   );
 }

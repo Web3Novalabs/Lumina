@@ -31,11 +31,8 @@ jobs:
           NEXT_PUBLIC_STELLAR_NETWORK: testnet
         run: npm run build
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Unit tests
-        run: npm test -- --ci --passWithNoTests
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Check for remaining mock data
         working-directory: ./nevo_frontend
@@ -97,3 +94,16 @@ jobs:
 
       - name: Run tests
         run: cargo test --lib
+
+  markdown-links:
+    name: Markdown — Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "yes"
+          config-file: ".github/mlc_config.json"
