@@ -168,16 +168,44 @@ pub struct Application {
     pub amount_claimed: i128,
 }
 
-// TODO: Replace with real implementation from issue #XYZ
-// Pool state enum for contribution validation
+/// Pool state machine enum representing the lifecycle of a donation pool.
+///
+/// # State Machine
+///
+/// The pool progresses through states as follows:
+/// - **Active** (initial state): Pool accepts donations and applications
+/// - **Paused**: Pool temporarily halted, donations and applications rejected
+/// - **Completed**: Funding goal reached
+/// - **Cancelled**: Pool was cancelled by sponsor or admin
+/// - **Disbursed**: Funds have been distributed to approved students
+/// - **Closed**: Pool is permanently closed, no further operations allowed
+///
+/// # State Transitions
+///
+/// Current state transition functions:
+/// - `create_pool()` / `create_pool_for_school()`: Initializes pool to `Active`
+/// - `donate()`: Validates pool is `Active` (rejects if `Closed`)
+/// - `close_pool()`: Requires pool to be `Disbursed` or `Cancelled` before closing
+///
+/// # Validation Rules
+///
+/// - `donate()` only accepts donations if state is `Active`
+/// - `close_pool()` only allows closing from `Disbursed` or `Cancelled` states
+/// - Other state transitions are not yet implemented (see TODO comments)
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PoolState {
+    /// Pool is active and accepting donations and student applications.
     Active,
+    /// Pool is temporarily paused; donations and applications are rejected.
     Paused,
+    /// Funding goal has been reached.
     Completed,
+    /// Pool has been cancelled and is no longer accepting funds or applications.
     Cancelled,
+    /// Funds have been dispersed to approved students; no new disbursements allowed.
     Disbursed,
+    /// Pool is permanently closed; no further operations are permitted.
     Closed,
 }
 
