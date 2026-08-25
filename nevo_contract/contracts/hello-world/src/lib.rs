@@ -19,6 +19,11 @@ const ADMIN_KEY: &str = "admin";
 const SCHOOL_REG_PREFIX: &str = "school_reg";
 const POOL_SCHOOL_PREFIX: &str = "pool_school";
 
+// Contract-wide pause switch. When paused, state-mutating pool operations
+// (creating/saving pools, contributing, updating pool state) are rejected;
+// read-only getters continue to work.
+const PAUSED_KEY: &str = "paused";
+
 // TODO: Replace with real implementation from issue #XYZ
 // Emergency withdrawal storage keys
 const EMERGENCY_WITHDRAWAL_PREFIX: &str = "emergency_withdraw";
@@ -169,6 +174,79 @@ impl Contract {
         env.storage().persistent().set(&admin_key, &admin);
     }
 
+    /// Verify that `caller` is the stored platform admin.
+    fn require_admin(env: &Env, caller: &Address) {
+        let admin_key = Symbol::new(env, ADMIN_KEY);
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<_, Address>(&admin_key)
+            .expect("Admin not set");
+        if &stored_admin != caller {
+            panic!("Unauthorized admin");
+        }
+    }
+
+    /// Panic if the contract is currently paused. Called by state-mutating
+    /// pool operations; getters never call this.
+    fn require_not_paused(env: &Env) {
+        if Self::is_paused(env.clone()) {
+            panic!("ContractPaused");
+        }
+    }
+
+    // ─── Pause Control ────────────────────────────────────────────────────────
+
+    /// Pause the contract, blocking state-mutating pool operations.
+    ///
+    /// Only the stored admin may call this.
+    ///
+    /// # Panics
+    /// - `"Admin not set"` if no admin has been configured
+    /// - `"Unauthorized admin"` if `admin` does not match the stored admin
+    /// - `"AlreadyPaused"` if the contract is already paused
+    pub fn pause(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_admin(&env, &admin);
+
+        if Self::is_paused(env.clone()) {
+            panic!("AlreadyPaused");
+        }
+
+        let paused_key = Symbol::new(&env, PAUSED_KEY);
+        env.storage().persistent().set(&paused_key, &true);
+    }
+
+    /// Unpause the contract, re-enabling state-mutating pool operations.
+    ///
+    /// Only the stored admin may call this.
+    ///
+    /// # Panics
+    /// - `"Admin not set"` if no admin has been configured
+    /// - `"Unauthorized admin"` if `admin` does not match the stored admin
+    /// - `"AlreadyUnpaused"` if the contract is not currently paused
+    pub fn unpause(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_admin(&env, &admin);
+
+        if !Self::is_paused(env.clone()) {
+            panic!("AlreadyUnpaused");
+        }
+
+        let paused_key = Symbol::new(&env, PAUSED_KEY);
+        env.storage().persistent().set(&paused_key, &false);
+    }
+
+    /// Return whether the contract is currently paused.
+    /// Defaults to `false` if pause state has never been set.
+    pub fn is_paused(env: Env) -> bool {
+        let paused_key = Symbol::new(&env, PAUSED_KEY);
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&paused_key)
+            .unwrap_or(false)
+    }
+
     /// Register a school by admin authorization.
     pub fn register_school(env: Env, admin: Address, school: Address) {
         admin.require_auth();
@@ -207,6 +285,8 @@ impl Contract {
         goal: u128,
         application_deadline: u64,
     ) -> u32 {
+        Self::require_not_paused(&env);
+
         if description.len() as u32 > MAX_DESCRIPTION_LENGTH as u32 {
             panic!("Description exceeds maximum length");
         }
@@ -302,6 +382,8 @@ impl Contract {
 
     /// Donate to an existing pool.
     pub fn donate(env: Env, pool_id: u32, donor: Address, amount: u128) {
+        Self::require_not_paused(&env);
+
         let pool: Pool = env
             .storage()
             .persistent()
@@ -421,6 +503,20 @@ impl Contract {
             .expect("Pool not found");
 
         pool.collected
+    }
+
+    /// Get the funding goal for a pool.
+    ///
+    /// # Panics
+    /// - `"CampaignNotFound"` if pool_id does not correspond to an existing pool
+    pub fn get_campaign_goal(env: Env, pool_id: u32) -> u128 {
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get::<_, Pool>(&pool_id)
+            .unwrap_or_else(|| panic!("CampaignNotFound"));
+
+        pool.goal
     }
 
     /// Close a donation pool.
@@ -1060,6 +1156,8 @@ impl Contract {
         token_address: Address,
         amount: i128,
     ) {
+        Self::require_not_paused(&env);
+
         donor.require_auth();
 
         let pool: Pool = env
@@ -1202,6 +1300,8 @@ impl Contract {
     // TODO: Replace with real implementation from issue #XYZ
     // Mock function to set pool state for testing
     pub fn set_pool_state(env: Env, pool_id: u32, state: PoolState) {
+        Self::require_not_paused(&env);
+
         let mut pool: Pool = env
             .storage()
             .persistent()
@@ -1214,4 +1314,5 @@ impl Contract {
 }
 
 mod test;
+mod test_campaign_pause;
 mod test_issues;
