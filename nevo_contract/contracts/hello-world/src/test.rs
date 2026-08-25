@@ -527,8 +527,8 @@ fn test_withdraw_unallocated_funds_respects_locked_funds_regression_949() {
     client.set_admin(&admin);
 
     let school = Address::generate(&env);
-    let school_metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
-    client.register_school(&school, &school_metadata_hash);
+    let metadata_hash = BytesN::from_array(&env, &[5u8; 32]);
+    client.register_school(&school, &metadata_hash);
 
     let creator = Address::generate(&env);
     let pool_goal = 100_000_000u128; // 100 XLM in stroops
@@ -569,7 +569,7 @@ fn test_withdraw_unallocated_funds_respects_locked_funds_regression_949() {
     client.approve_application(&pool_id, &school, &student, &true);
 
     // Create Application record by claiming funds
-    let approved_amount = 60_000_000i128; // Approve 60M, locking 60M from withdrawal
+    let _approved_amount = 60_000_000i128; // Approve 60M, locking 60M from withdrawal
     let application_status = client.get_application_status(&pool_id, &student);
     assert_eq!(
         application_status,
