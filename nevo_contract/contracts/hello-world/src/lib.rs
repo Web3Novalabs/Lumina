@@ -1333,3 +1333,7 @@ impl Contract {
 mod test;
 mod test_issues;
 mod test_register_school;
+mod test_pool_lifecycle;
+mod test_emergency_withdrawal_integration;
+mod test_concurrent_campaigns;
+mod test_concurrent_pools;
