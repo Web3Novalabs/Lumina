@@ -37,7 +37,7 @@ export class Pool {
 
   @Index()
   @Column({
-    type: 'enum',
+    type: 'simple-enum',
     enum: PoolStatus,
     default: PoolStatus.Active,
   })

@@ -2,9 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Pool, PoolStatus } from './pool.entity.js';
-import type { UpdatePoolDto } from './pools.controller.js';
+import type { UpdatePoolDto } from './dto/update-pool.dto.js';
 import type { CreatePoolDto } from './dto/create-pool.dto.js';
-import type { GetPoolsDto } from './dto/get-pools.dto.js';
+import type { FilterPoolsDto } from './dto/filter-pools.dto.js';
 import { ContractService } from '../contract/contract.service.js';
 
 export interface ChainPoolData {
@@ -21,6 +21,16 @@ export class PoolsService {
     private readonly contractService: ContractService,
   ) {}
 
+  /**
+   * Creates or updates the local record of a pool observed on-chain.
+   *
+   * An existing pool (matched on `contractPoolId`) has its creator and goal
+   * refreshed; off-chain metadata such as title, description and image is left
+   * untouched. A pool seen for the first time is inserted with empty metadata
+   * and zero raised, ready to be filled in later.
+   * @param data Pool fields read from the contract.
+   * @returns The saved pool entity.
+   */
   async upsertFromChain(data: ChainPoolData): Promise<Pool> {
     const existing = await this.poolRepo.findOne({
       where: { contractPoolId: data.contractPoolId },
@@ -47,14 +57,14 @@ export class PoolsService {
     );
   }
 
-  async findAll(query: GetPoolsDto): Promise<{
+  async findAll(query: FilterPoolsDto): Promise<{
     data: Pool[];
     total: number;
     page: number;
     limit: number;
   }> {
-    const page = query.page ? Math.max(1, parseInt(query.page, 10)) : 1;
-    const limit = query.limit ? Math.max(1, parseInt(query.limit, 10)) : 10;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
     const queryBuilder = this.poolRepo.createQueryBuilder('pool');
@@ -66,11 +76,8 @@ export class PoolsService {
     }
 
     if (query.status) {
-      const normalizedStatus =
-        query.status.charAt(0).toUpperCase() +
-        query.status.slice(1).toLowerCase();
       queryBuilder.andWhere('pool.status = :status', {
-        status: normalizedStatus as PoolStatus,
+        status: query.status,
       });
     }
 
@@ -125,6 +132,16 @@ export class PoolsService {
     return this.poolRepo.findOne({ where: { contractPoolId } });
   }
 
+  /**
+   * Loads a pool and merges its stored metadata with live on-chain state.
+   *
+   * The contract is queried for the amount raised, whether the pool is closed
+   * and the donor count; those are returned alongside the stored fields as
+   * `raisedOnChain`, `closedOnChain` and `donorCount`. If the id is not numeric
+   * the on-chain lookups are skipped and those fields keep their defaults.
+   * @param contractPoolId The pool's on-chain id.
+   * @returns The merged pool, or null if no such pool is stored locally.
+   */
   async findOneMerged(contractPoolId: string) {
     const pool = await this.poolRepo.findOne({ where: { contractPoolId } });
     if (!pool) return null;

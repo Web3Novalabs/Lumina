@@ -1,40 +1,53 @@
 'use client';
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useDonationsStore } from '@/src/store/donationsStore';
-import type { Donation } from '@/src/store/donationsStore';
+import { EmptyState } from '@/components/EmptyState';
 
 function ReceiptContent() {
   const searchParams = useSearchParams();
   const txHashParam = searchParams.get('txHash');
   const router = useRouter();
   const { history } = useDonationsStore();
-  const [donation, setDonation] = useState<Donation | null>(null);
+
+  const donation = txHashParam
+    ? (history.find((d) => d.txHash === txHashParam) ?? null)
+    : null;
+  const notFound = !!txHashParam && donation === null;
 
   useEffect(() => {
     if (!txHashParam) {
       router.replace('/');
-      return;
     }
-    const found = history.find((d) => d.txHash === txHashParam);
-    if (!found) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDonation({
-        id: 'mock-id',
-        poolId: '1',
-        poolName: 'Unknown Pool',
-        amount: '0',
-        asset: 'XLM',
-        txHash: txHashParam,
-        timestamp: new Date().toISOString(),
-        status: 'confirmed',
-      });
-    } else {
-      setDonation(found);
-    }
-  }, [txHashParam, history, router]);
+  }, [txHashParam, router]);
+
+  if (!txHashParam) {
+    return (
+      <div className="flex justify-center py-20">
+        <div className="size-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-brand-600" />
+      </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-12 sm:px-6">
+        <EmptyState
+          icon="not-found"
+          title="Receipt not found"
+          description="We couldn't find a donation receipt matching this transaction. It may have been made in a different browser or device."
+          action={{ label: 'Go to home', href: '/' }}
+          secondaryAction={{
+            label: 'View donation history',
+            href: '/donations',
+            variant: 'secondary',
+          }}
+        />
+      </main>
+    );
+  }
 
   if (!donation) {
     return (

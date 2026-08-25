@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
+import { ContractController } from './contract.controller.js';
 import { ContractService } from './contract.service.js';
 import { HorizonService } from './horizon.service.js';
-import { ContractController } from './contract.controller.js';
 
 @Module({
   controllers: [ContractController],

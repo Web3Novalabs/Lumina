@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { BackToTopButton } from '@/components';
 import { EmptyState } from '@/components/EmptyState';
 import { useDonationsStore, Donation } from '@/src/store';
 import { CopyButton } from '@/components/CopyButton';
@@ -317,6 +318,7 @@ export default function DonationsPage() {
           )}
         </>
       )}
+      <BackToTopButton />
     </main>
   );
 }

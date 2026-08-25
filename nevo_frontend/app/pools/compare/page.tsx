@@ -7,6 +7,7 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { Avatar } from '@/components/Avatar';
 import { Button } from '@/components/Button';
 import { EmptyState } from '@/components/EmptyState';
+import { getDonorCount } from '@/lib/getDonorCount';
 
 type SortMetric = 'raised' | 'target' | 'progress' | 'donors';
 
@@ -15,16 +16,6 @@ export default function PoolComparePage() {
   const [selectedPools, setSelectedPools] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<SortMetric>('raised');
   const [isComparing, setIsComparing] = useState(false);
-
-  // Calculate donor count for a pool
-  const getDonorCount = (pool: Pool): number => {
-    if (pool.id === '1') return 42;
-    if (pool.id === '2') return 87;
-    if (pool.id === '3') return 31;
-    if (pool.id === '4') return 15;
-    if (pool.id === '5') return 5;
-    return Math.floor((pool.raised * 7.3) / 100) + 1;
-  };
 
   // Sort pools in comparison by selected metric
   const sortedComparisonPools = useMemo(() => {
@@ -103,7 +94,7 @@ export default function PoolComparePage() {
 
   if (!isComparing && selectedPools.length === 0) {
     return (
-      <div className="min-h-screen bg-[var(--color-background)]">
+      <main className="min-h-screen bg-[var(--color-background)]">
         <div className="container mx-auto px-4 py-12">
           {/* Header */}
           <div className="mb-12">
@@ -240,13 +231,13 @@ export default function PoolComparePage() {
             )}
           </div>
         </div>
-      </div>
+      </main>
     );
   }
 
   // Comparison View
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
+    <main className="min-h-screen bg-[var(--color-background)]">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
@@ -701,6 +692,6 @@ export default function PoolComparePage() {
           </Link>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

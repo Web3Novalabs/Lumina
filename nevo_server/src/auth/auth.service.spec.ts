@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedException } from '@nestjs/common';
-import { AuthService, VerifyDto } from './auth.service';
+import { AuthService } from './auth.service';
+import { VerifyAuthDto } from './dto/verify-auth.dto';
 import { UsersService } from '../users/users.service';
 import { NonceService } from './nonce.service';
 import { User } from '../users/user.entity';
@@ -233,7 +234,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message,
@@ -252,7 +253,7 @@ describe('AuthService', () => {
       const message = 'nonexistent-nonce';
       const signature = keypair.sign(Buffer.from(message)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message,
@@ -279,7 +280,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -305,7 +306,7 @@ describe('AuthService', () => {
       const nonce = 'used-nonce';
       const signature = keypair.sign(Buffer.from(nonce)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -351,7 +352,7 @@ describe('AuthService', () => {
       const nonce = 'reused-nonce';
       const signature = keypair.sign(Buffer.from(nonce)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -380,7 +381,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature: invalidSignature,
         message,
@@ -397,7 +398,7 @@ describe('AuthService', () => {
       const message = 'test-message';
       const signature = keypair1.sign(Buffer.from(message)).toString('hex');
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair2.publicKey(),
         signature,
         message,
@@ -423,7 +424,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,
@@ -475,7 +476,7 @@ describe('AuthService', () => {
         used: false,
       };
 
-      const dto: VerifyDto = {
+      const dto: VerifyAuthDto = {
         publicKey: keypair.publicKey(),
         signature,
         message: nonce,

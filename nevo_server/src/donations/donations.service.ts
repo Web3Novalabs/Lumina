@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Donation } from './donation.entity.js';
 
-export type DonationSortBy = 'newest' | 'largest';
+export enum DonationSortBy {
+  newest = 'newest',
+  largest = 'largest',
+}
 
 @Injectable()
 export class DonationsService {
@@ -12,38 +15,96 @@ export class DonationsService {
     private readonly donationRepo: Repository<Donation>,
   ) {}
 
+  /**
+   * Lists the donations recorded against a single pool.
+   * @param poolId The pool to list donations for.
+   * @param sortBy `newest` orders by creation date descending (the default);
+   *   `largest` orders by donation amount descending.
+   * @param page 1-based page number. Pagination is applied only when `page` or
+   *   `limit` is supplied, and defaults to page 1.
+   * @param limit Page size, clamped to 1-100 and defaulting to 10.
+   * @returns The matching donations.
+   */
   async findByPool(
     poolId: string,
-    sortBy: DonationSortBy = 'newest',
+    sortBy: DonationSortBy = DonationSortBy.newest,
+    page?: number | string,
+    limit?: number | string,
   ): Promise<Donation[]> {
-    if (sortBy === 'largest') {
-      return this.donationRepo
+    const pageNum = page !== undefined ? Math.max(1, parseInt(String(page), 10) || 1) : undefined;
+    const limitNum =
+      limit !== undefined
+        ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
+        : undefined;
+
+    if (sortBy === DonationSortBy.largest) {
+      const qb = this.donationRepo
         .createQueryBuilder('d')
         .where('d.poolId = :poolId', { poolId })
-        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC')
-        .getMany();
+        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC');
+
+      if (pageNum !== undefined || limitNum !== undefined) {
+        const p = pageNum ?? 1;
+        const l = limitNum ?? 10;
+        qb.skip((p - 1) * l).take(l);
+      }
+      return qb.getMany();
     }
-    return this.donationRepo.find({
+
+    const findOptions: any = {
       where: { poolId },
       order: { createdAt: 'DESC' },
-    });
+    };
+
+    if (pageNum !== undefined || limitNum !== undefined) {
+      const p = pageNum ?? 1;
+      const l = limitNum ?? 10;
+      findOptions.skip = (p - 1) * l;
+      findOptions.take = l;
+    }
+
+    return this.donationRepo.find(findOptions);
   }
 
   async findByDonor(
     donorWallet: string,
-    sortBy: DonationSortBy = 'newest',
+    sortBy: DonationSortBy = DonationSortBy.newest,
+    page?: number | string,
+    limit?: number | string,
   ): Promise<Donation[]> {
-    if (sortBy === 'largest') {
-      return this.donationRepo
+    const pageNum = page !== undefined ? Math.max(1, parseInt(String(page), 10) || 1) : undefined;
+    const limitNum =
+      limit !== undefined
+        ? Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10))
+        : undefined;
+
+    if (sortBy === DonationSortBy.largest) {
+      const qb = this.donationRepo
         .createQueryBuilder('d')
         .where('d.donorWallet = :donorWallet', { donorWallet })
-        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC')
-        .getMany();
+        .orderBy('CAST(d.amount AS NUMERIC)', 'DESC');
+
+      if (pageNum !== undefined || limitNum !== undefined) {
+        const p = pageNum ?? 1;
+        const l = limitNum ?? 10;
+        qb.skip((p - 1) * l).take(l);
+      }
+      return qb.getMany();
     }
-    return this.donationRepo.find({
+
+    const findOptions: any = {
       where: { donorWallet },
       order: { createdAt: 'DESC' },
-    });
+    };
+
+    if (pageNum !== undefined || limitNum !== undefined) {
+      const p = pageNum ?? 1;
+      const l = limitNum ?? 10;
+      findOptions.skip = (p - 1) * l;
+      findOptions.take = l;
+    }
+
+    return this.donationRepo.find(findOptions);
   }
 
   async isTxProcessed(txHash: string): Promise<boolean> {

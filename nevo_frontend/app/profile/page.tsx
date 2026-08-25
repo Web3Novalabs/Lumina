@@ -44,6 +44,7 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<ApiProfile | null>(null);
   const [recentDonations, setRecentDonations] = useState<ApiDonation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -63,7 +64,10 @@ export default function ProfilePage() {
         setIsLoading(false);
       })
       .catch((err) => {
+        const message = parseApiError(err);
         console.error('Failed to load profile:', err);
+        setFetchError(message);
+        toast(message, 'error');
       })
       .finally(() => {
         if (active) {
@@ -117,12 +121,22 @@ export default function ProfilePage() {
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight">
-          Profile & Settings
+          Profile &amp; Settings
         </h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           Manage your account information and preferences
         </p>
       </div>
+
+      {fetchError && (
+        <div
+          role="alert"
+          className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        >
+          <p className="font-medium">Failed to load profile</p>
+          <p className="mt-1">{fetchError}</p>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Profile Card */}
@@ -179,6 +193,8 @@ export default function ProfilePage() {
                 {isLoading ? (
                   <div className="h-5 w-40 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mx-auto" />
                 ) : (
+                  // Copy-to-clipboard for the public key is already provided
+                  // by WalletAddress itself (see #883) — don't add a second one.
                   <WalletAddress address={publicKey || ''} />
                 )}
               </div>
