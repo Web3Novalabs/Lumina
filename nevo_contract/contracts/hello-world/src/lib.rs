@@ -1,3 +1,22 @@
+//! Nevo donation pool contract.
+//!
+//! Sponsors create donation pools with a funding goal and application
+//! deadline; donors contribute funds (native or via `donate_with_token`)
+//! that accumulate toward the pool's goal. Schools register with the
+//! platform admin and can be linked to pools so that students may apply
+//! for support. Approved applications are funded via milestone-based
+//! disbursements: a school/admin sets a list of `Milestone`s whose amounts
+//! must sum to the pool goal, and approved students claim funds as
+//! milestones are met, up to their approved amount.
+//!
+//! Storage is organized around a handful of key prefixes (pool records,
+//! per-pool metadata, application and applicant records, milestones,
+//! school registrations, claimed/protocol-fee accumulators, and pool
+//! deadlines), each combined with the relevant `pool_id`/`Address` to form
+//! a unique persistent storage key. A single platform `admin` address
+//! gates privileged operations such as school registration and protocol
+//! fee configuration/claiming.
+
 #![cfg_attr(not(test), no_std)]
 
 use soroban_sdk::{
