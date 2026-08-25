@@ -4,7 +4,7 @@ use super::*;
 use soroban_sdk::{
     testutils::{Address as _, MockAuth, MockAuthInvoke},
     token::StellarAssetClient,
-    Address, Env, IntoVal, String,
+    Address, BytesN, Env, IntoVal, String,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -527,7 +527,8 @@ fn test_withdraw_unallocated_funds_respects_locked_funds_regression_949() {
     client.set_admin(&admin);
 
     let school = Address::generate(&env);
-    client.register_school(&admin, &school);
+    let school_metadata_hash = BytesN::from_array(&env, &[0u8; 32]);
+    client.register_school(&school, &school_metadata_hash);
 
     let creator = Address::generate(&env);
     let pool_goal = 100_000_000u128; // 100 XLM in stroops
