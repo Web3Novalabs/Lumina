@@ -629,3 +629,107 @@ fn test_closed_state_persists() {
     let pool2 = client.get_pool(&pool_id);
     assert_eq!(pool2.4, true);
 }
+
+// ============= ISSUE #942: MILESTONE SETUP/GETTER TESTS =============
+
+/// Test 1: Setting an empty milestone list panics
+#[test]
+#[should_panic(expected = "Milestones required")]
+fn test_setup_application_milestones_empty_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.setup_application_milestones(&pool_id, &student, &Vec::new(&env));
+}
+
+/// Test 2: Milestone amounts that don't sum to the pool goal panic
+#[test]
+#[should_panic(expected = "Milestone total must equal pool goal")]
+fn test_setup_application_milestones_total_mismatch_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: 100_000_000u128 }, Milestone { amount: 200_000_000u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+}
+
+/// Test 3: Milestone amounts that overflow u128 on summation panic
+#[test]
+#[should_panic(expected = "Milestone amount overflow")]
+fn test_setup_application_milestones_overflow_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: u128::MAX }, Milestone { amount: 1u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+}
+
+/// Test 4: Milestones summing to the pool goal are stored and read back correctly
+#[test]
+fn test_setup_and_get_milestones_round_trip() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: 400_000_000u128 }, Milestone { amount: 600_000_000u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+
+    let stored = client.get_milestones(&pool_id, &student);
+    assert_eq!(stored, milestones);
+}
