@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
     token::StellarAssetClient,
-    Address, Env, String, Symbol,
+    Address, Env, IntoVal, String, Symbol,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -732,4 +732,102 @@ fn test_setup_and_get_milestones_round_trip() {
 
     let stored = client.get_milestones(&pool_id, &student);
     assert_eq!(stored, milestones);
+}
+
+// ============= ISSUE #940: POOL DEADLINE SETTER/GETTER TESTS =============
+
+/// Test 1: get_pool_deadline defaults to 0 when no deadline has been set
+#[test]
+fn test_get_pool_deadline_defaults_to_zero() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_pool_deadline(&pool_id), 0u32);
+}
+
+/// Test 2: Sponsor can set the deadline and read it back
+#[test]
+fn test_set_and_get_pool_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence() + 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+
+    assert_eq!(client.get_pool_deadline(&pool_id), deadline);
+}
+
+/// Test 3: A caller other than the pool sponsor cannot set the deadline
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_set_pool_deadline_rejects_non_sponsor() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let non_sponsor = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence() + 1_000;
+    client
+        .mock_auths(&[MockAuth {
+            address: &non_sponsor,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "set_pool_deadline",
+                args: (&pool_id, &deadline).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_pool_deadline(&pool_id, &deadline);
+}
+
+/// Test 4: A deadline that is not strictly in the future panics
+#[test]
+#[should_panic(expected = "Deadline must be in the future")]
+fn test_set_pool_deadline_rejects_non_future_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence();
+    client.set_pool_deadline(&pool_id, &deadline);
 }
