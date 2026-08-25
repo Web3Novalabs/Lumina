@@ -36,6 +36,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cron": "^4.4.0",
+    "helmet": "^8.3.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pg": "^8.22.0",
