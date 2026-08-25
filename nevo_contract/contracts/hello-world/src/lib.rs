@@ -1,8 +1,8 @@
 #![cfg_attr(not(test), no_std)]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env, String,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
+    Env, String, Symbol, Vec,
 };
 
 // Storage key constants
@@ -314,15 +314,6 @@ impl Contract {
 
         let pool_id = pool_count + 1;
         pool_count = pool_id;
-
-        // Legacy compatibility: keep old symbolic key constants reachable.
-        let _ = (
-            POOL_PREFIX,
-            CREATOR_SUFFIX,
-            GOAL_SUFFIX,
-            COLLECTED_SUFFIX,
-            CLOSED_SUFFIX,
-        );
 
         let metadata_key = (Symbol::new(&env, "metadata"), pool_id);
         env.storage()
