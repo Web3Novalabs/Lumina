@@ -491,8 +491,12 @@ fn test_maximum_i128_amount_contribution_succeeds() {
 }
 
 /// Test 4: Contribution exceeding user balance fails with token transfer error
+///
+/// `Error(Contract, #10)` here is the token contract's insufficient-balance
+/// error, raised from inside the SAC during `transfer` - not this contract's
+/// own error #10.
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #10)")]
 fn test_contribution_exceeding_balance_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -513,6 +517,72 @@ fn test_contribution_exceeding_balance_fails() {
 
     // Try to contribute more than balance - should fail with token transfer error
     client.donate_with_token(&pool_id, &donor, &token, &200_000_000i128);
+}
+
+/// Test 5: Every rejected contribution leaves pool accounting and donor
+/// balances untouched, and a valid contribution still works afterwards.
+///
+/// Tests 1-4 assert only that the call panics. This pins the rest of the
+/// rejection contract: the error surfaces through `try_*` rather than
+/// unwinding, nothing is observable afterwards, and the pool is still usable.
+///
+/// Note this does not prove the contract validates before writing - the host
+/// reverts storage on panic either way - so it is a regression guard on the
+/// caller-visible outcome, not on statement ordering inside `donate_with_token`.
+#[test]
+fn test_rejected_contributions_do_not_change_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let starting_balance = 100_000_000i128;
+    let token = create_token(&env, starting_balance, &donor);
+    let token_client = token::Client::new(&env, &token);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // Zero, negative, and over-balance amounts are all rejected.
+    for amount in [0i128, -100_000_000i128, starting_balance + 1] {
+        assert!(
+            client
+                .try_donate_with_token(&pool_id, &donor, &token, &amount)
+                .is_err(),
+            "amount {} should be rejected",
+            amount
+        );
+
+        assert_eq!(
+            client.get_total_raised(&pool_id),
+            0u128,
+            "pool collected must stay 0 after rejecting amount {}",
+            amount
+        );
+        assert_eq!(
+            client.get_contribution(&pool_id, &donor),
+            0u128,
+            "donor contribution must stay 0 after rejecting amount {}",
+            amount
+        );
+        assert_eq!(
+            token_client.balance(&donor),
+            starting_balance,
+            "donor balance must be intact after rejecting amount {}",
+            amount
+        );
+    }
+
+    // A valid contribution still works after the rejected ones.
+    client.donate_with_token(&pool_id, &donor, &token, &1_000_000i128);
+    assert_eq!(client.get_total_raised(&pool_id), 1_000_000u128);
 }
 
 // ============= ISSUE #476: POOL CLOSURE STATE VALIDATION TESTS =============
@@ -1286,3 +1356,329 @@ fn test_get_contribution_is_scoped_per_pool() {
         "A donation to one pool must not appear in another"
     );
 }
+
+// ============= ISSUE #1064: CROWDFUNDING TOKEN CONFIGURATION TESTS =============
+
+/// Test 1: Admin can update the crowdfunding token successfully.
+#[test]
+fn test_admin_can_set_crowdfunding_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let holder = Address::generate(&env);
+    let token = create_token(&env, 1_000i128, &holder);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &token);
+
+    assert_eq!(client.get_crowdfunding_token(), Some(token));
+}
+
+/// Test 2: A non-admin caller fails with UnauthorizedAdmin.
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_non_admin_cannot_set_crowdfunding_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let holder = Address::generate(&env);
+    let token = create_token(&env, 1_000i128, &holder);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&non_admin, &token);
+}
+
+/// Test 2b: Setting the token before any admin is configured fails with AdminNotSet.
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_set_crowdfunding_token_without_admin_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let caller = Address::generate(&env);
+    let holder = Address::generate(&env);
+    let token = create_token(&env, 1_000i128, &holder);
+
+    client.set_crowdfunding_token(&caller, &token);
+}
+
+/// Test 3: An address that is not a token contract is rejected, and the
+/// previously configured token is left in place.
+#[test]
+fn test_invalid_token_address_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let holder = Address::generate(&env);
+    let valid_token = create_token(&env, 1_000i128, &holder);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &valid_token);
+
+    // A plain account address is not a token contract.
+    let not_a_token = Address::generate(&env);
+    assert!(
+        client.try_set_crowdfunding_token(&admin, &not_a_token).is_err(),
+        "A non-token address must be rejected"
+    );
+
+    assert_eq!(
+        client.get_crowdfunding_token(),
+        Some(valid_token),
+        "A rejected update must not overwrite the configured token"
+    );
+}
+
+/// Test 4: A token update emits the token-updated event carrying the address.
+#[test]
+fn test_set_crowdfunding_token_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let holder = Address::generate(&env);
+    let token = create_token(&env, 1_000i128, &holder);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &token);
+
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected a token-updated event");
+
+    assert_eq!(event_contract, contract_id);
+    assert_eq!(topics, (symbol_short!("tkn_upd"),).into_val(&env));
+    assert_eq!(
+        Address::try_from_val(&env, &data).expect("token-updated data should be an Address"),
+        token
+    );
+}
+
+/// Test 5: The getter is None before configuration and reflects each update.
+#[test]
+fn test_get_crowdfunding_token_returns_updated_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let holder = Address::generate(&env);
+    let first = create_token(&env, 1_000i128, &holder);
+    let second = create_token(&env, 1_000i128, &holder);
+
+    client.set_admin(&admin);
+
+    assert_eq!(
+        client.get_crowdfunding_token(),
+        None,
+        "No crowdfunding token is configured by default"
+    );
+
+    client.set_crowdfunding_token(&admin, &first);
+    assert_eq!(client.get_crowdfunding_token(), Some(first));
+
+    client.set_crowdfunding_token(&admin, &second);
+    assert_eq!(client.get_crowdfunding_token(), Some(second));
+}
+
+// ── Enforcement: the configured token gates token-denominated operations ──
+
+/// A donation in the configured token is accepted.
+#[test]
+fn test_donation_in_configured_token_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token = create_token(&env, 100_000i128, &donor);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &token);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate_with_token(&pool_id, &donor, &token, &50_000i128);
+
+    assert_eq!(client.get_total_raised(&pool_id), 50_000u128);
+}
+
+/// A donation in a different token is rejected with InvalidToken.
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_donation_in_wrong_token_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let configured = create_token(&env, 100_000i128, &donor);
+    let other = create_token(&env, 100_000i128, &donor);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &configured);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate_with_token(&pool_id, &donor, &other, &50_000i128);
+}
+
+/// A rejected wrong-token donation must not move funds or pool state.
+#[test]
+fn test_wrong_token_donation_does_not_change_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let configured = create_token(&env, 100_000i128, &donor);
+    let other = create_token(&env, 100_000i128, &donor);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &configured);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000u128,
+        &100_000u64,
+    );
+
+    assert!(client
+        .try_donate_with_token(&pool_id, &donor, &other, &50_000i128)
+        .is_err());
+
+    assert_eq!(client.get_total_raised(&pool_id), 0u128);
+    assert_eq!(client.get_contribution(&pool_id, &donor), 0u128);
+    assert_eq!(
+        token::Client::new(&env, &other).balance(&donor),
+        100_000i128,
+        "Donor balance in the rejected token must be untouched"
+    );
+}
+
+/// Claiming funds in a different token is rejected with InvalidToken.
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_claim_funds_in_wrong_token_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let student = Address::generate(&env);
+    let configured = create_token(&env, 100_000i128, &donor);
+    let other = create_token(&env, 100_000i128, &donor);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &configured);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000u128,
+        &100_000u64,
+    );
+    client.donate_with_token(&pool_id, &donor, &configured, &50_000i128);
+    client.set_application_status(&pool_id, &student, &String::from_str(&env, "Approved"));
+
+    // Funded in `configured`, so a claim denominated in `other` must fail.
+    client.claim_funds(&student, &pool_id, &10_000i128, &other);
+}
+
+/// An emergency withdrawal in a different token is rejected with InvalidToken.
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_emergency_withdraw_request_in_wrong_token_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let configured = create_token(&env, 100_000i128, &contract_id);
+    let other = create_token(&env, 100_000i128, &contract_id);
+
+    client.set_admin(&admin);
+    client.set_crowdfunding_token(&admin, &configured);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000u128,
+        &100_000u64,
+    );
+
+    client.request_emergency_withdraw(&admin, &pool_id, &other, &10_000i128);
+}
+
+/// With no crowdfunding token configured, any token is still accepted.
+#[test]
+fn test_any_token_accepted_when_unconfigured() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token_a = create_token(&env, 100_000i128, &donor);
+    let token_b = create_token(&env, 100_000i128, &donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_crowdfunding_token(), None);
+    client.donate_with_token(&pool_id, &donor, &token_a, &10_000i128);
+    client.donate_with_token(&pool_id, &donor, &token_b, &20_000i128);
+
+    assert_eq!(client.get_total_raised(&pool_id), 30_000u128);
+}
+
