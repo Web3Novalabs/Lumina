@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token::StellarAssetClient,
-    Address, BytesN, Env, String, Symbol,
+    vec, Address, BytesN, Env, IntoVal, String, Symbol, TryIntoVal,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -972,4 +972,223 @@ fn test_get_pool_school_fails_for_non_school_pool() {
     );
 
     client.get_pool_school(&pool_id);
+}
+
+// ============= ISSUE #1060: PRIVATE VS PUBLIC POOL CONTRIBUTION EVENT TESTS =============
+//
+// `donate()` is the public contribution path: it emits `DONATION_MADE`
+// ("donation") with no privacy-flag field, matching the "Public" row of the
+// Privacy Flags table in EVENTS_REFERENCE.md.
+//
+// `donate_with_token()` is the private contribution path: it emits
+// `CONTRIBUTION` ("contrib") whose last data field is an explicit
+// `privacy_flag: bool`, currently always `true`, matching the "Private" row
+// of the same table.
+
+/// Test 1: A public contribution via `donate` emits `DONATION_MADE` and is
+/// never tagged with the private `CONTRIBUTION` topic (privacy flag = public).
+#[test]
+fn test_public_donation_emits_public_donation_made_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Public Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let events_before_donation = env.events().all().len();
+
+    let amount = 50_000_000u128;
+    client.donate(&pool_id, &donor, &amount);
+
+    let all_events = env.events().all();
+    assert_eq!(
+        all_events.len(),
+        events_before_donation + 1,
+        "donate() should emit exactly one event"
+    );
+
+    let event = all_events.get(all_events.len() - 1).unwrap();
+    assert_eq!(event.0, contract_id, "event should come from the contract");
+    assert_eq!(
+        event.1,
+        (DONATION_MADE, pool_id).into_val(&env),
+        "public donation must use the DONATION_MADE topic, not CONTRIBUTION"
+    );
+    assert_eq!(
+        event.2,
+        (donor.clone(), amount, amount).into_val(&env),
+        "public donation event data must be (donor, amount, new_collected)"
+    );
+
+    // The public path must never emit the privately-flagged CONTRIBUTION event.
+    let has_private_contribution_event = all_events
+        .iter()
+        .any(|(_, topics, _)| topics.get(0) == Some(CONTRIBUTION.into_val(&env)));
+    assert!(
+        !has_private_contribution_event,
+        "a public donation must not emit a CONTRIBUTION (private) event"
+    );
+}
+
+/// Test 2: A private contribution via `donate_with_token` emits `CONTRIBUTION`
+/// with its privacy flag explicitly set to `true`, and the full event payload
+/// (contributor, amount, pool's updated collected total, and privacy flag)
+/// matches exactly what was contributed.
+#[test]
+fn test_private_contribution_emits_contribution_event_with_privacy_flag_true() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let amount = 75_000_000i128;
+    let token = create_token(&env, amount, &donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Private Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let events_before_contribution = env.events().all().len();
+
+    client.donate_with_token(&pool_id, &donor, &token, &amount);
+
+    let all_events = env.events().all();
+    assert_eq!(
+        all_events.len(),
+        events_before_contribution + 1,
+        "donate_with_token() should emit exactly one event"
+    );
+
+    let event = all_events.get(all_events.len() - 1).unwrap();
+    assert_eq!(event.0, contract_id, "event should come from the contract");
+    assert_eq!(
+        event.1,
+        (CONTRIBUTION, pool_id).into_val(&env),
+        "private contribution must use the CONTRIBUTION topic"
+    );
+
+    // Full payload check: contributor, amount, pool's new collected total,
+    // and the privacy flag must all be present and correct.
+    let new_collected = amount as u128;
+    assert_eq!(
+        event.2,
+        (donor.clone(), amount, new_collected, true).into_val(&env),
+        "private contribution event data must be (donor, amount, new_collected, privacy_flag=true)"
+    );
+
+    // Decode the privacy flag on its own to make the assertion explicit.
+    let (contributor, contributed_amount, collected_total, is_private): (
+        Address,
+        i128,
+        u128,
+        bool,
+    ) = event.2.clone().try_into_val(&env).unwrap();
+    assert_eq!(
+        contributor, donor,
+        "contributor address must match the donor"
+    );
+    assert_eq!(
+        contributed_amount, amount,
+        "amount must match what was contributed"
+    );
+    assert_eq!(
+        collected_total, new_collected,
+        "new_collected must reflect the pool's updated total"
+    );
+    assert!(
+        is_private,
+        "private contribution's privacy flag must be true"
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.3, new_collected,
+        "pool.collected must match the contribution"
+    );
+}
+
+/// Test 3: When a pool receives both a public donation and a private
+/// contribution, each emits its own correctly-flagged event and the pool's
+/// collected total accounts for both.
+#[test]
+fn test_public_and_private_contributions_are_independently_flagged() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let public_donor = Address::generate(&env);
+    let private_donor = Address::generate(&env);
+
+    let public_amount = 10_000_000u128;
+    let private_amount = 20_000_000i128;
+    let token = create_token(&env, private_amount, &private_donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Mixed Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let events_before = env.events().all().len();
+
+    client.donate(&pool_id, &public_donor, &public_amount);
+    client.donate_with_token(&pool_id, &private_donor, &token, &private_amount);
+
+    let all_events = env.events().all();
+    assert_eq!(
+        all_events.len(),
+        events_before + 2,
+        "both contributions should each emit exactly one event"
+    );
+
+    let public_event = all_events.get(events_before).unwrap();
+    let private_event = all_events.get(events_before + 1).unwrap();
+
+    assert_eq!(
+        public_event.1,
+        (DONATION_MADE, pool_id).into_val(&env),
+        "first contribution should be the public DONATION_MADE event"
+    );
+    assert_eq!(
+        public_event.2,
+        (public_donor.clone(), public_amount, public_amount).into_val(&env)
+    );
+
+    let new_collected = public_amount + private_amount as u128;
+    assert_eq!(
+        private_event.1,
+        (CONTRIBUTION, pool_id).into_val(&env),
+        "second contribution should be the private CONTRIBUTION event"
+    );
+    assert_eq!(
+        private_event.2,
+        (private_donor.clone(), private_amount, new_collected, true).into_val(&env),
+        "private contribution event must carry privacy_flag=true and the running total"
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.3, new_collected,
+        "pool.collected must include both the public and private contributions"
+    );
 }
