@@ -484,6 +484,30 @@ impl Contract {
         pool.collected
     }
 
+    /// Get the current balance (total donations received) for a campaign / pool.
+    ///
+    /// This is the public-facing alias for `get_total_raised`, using the
+    /// "campaign balance" terminology from issue #1061.
+    ///
+    /// # Arguments
+    /// * `env`     - The contract environment
+    /// * `pool_id` - The numeric ID of the campaign pool to query
+    ///
+    /// # Returns
+    /// The cumulative donation amount as `u128` (in stroops or the token's base unit).
+    ///
+    /// # Panics
+    /// - `ContractError::PoolNotFound` (`Error(Contract, #1)`) if `pool_id` does not exist.
+    pub fn get_campaign_balance(env: Env, pool_id: u32) -> u128 {
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get::<_, Pool>(&pool_id)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
+
+        pool.collected
+    }
+
     /// Close a donation pool.
     pub fn close_pool(env: Env, pool_id: u32) {
         let pool: Pool = env
@@ -1303,4 +1327,5 @@ impl Contract {
 }
 
 mod test;
+mod test_campaign_balance;
 mod test_issues;
