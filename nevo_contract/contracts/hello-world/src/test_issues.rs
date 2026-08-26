@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token::StellarAssetClient,
-    Address, BytesN, Env, String, Symbol,
+    Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -972,4 +972,317 @@ fn test_get_pool_school_fails_for_non_school_pool() {
     );
 
     client.get_pool_school(&pool_id);
+}
+
+// ============= ISSUE #1065: CREATION FEE CONFIGURATION VALIDATION TESTS =============
+
+/// Test 1: Admin can set a positive fee.
+#[test]
+fn test_admin_can_set_positive_creation_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.set_creation_fee(&admin, &500i128);
+
+    assert_eq!(client.get_creation_fee(), 500i128);
+}
+
+/// Test 2: Admin can set a zero fee (a valid value that disables the fee).
+#[test]
+fn test_admin_can_set_zero_creation_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    // Set a non-zero fee first so the zero write is observable.
+    client.set_creation_fee(&admin, &500i128);
+    client.set_creation_fee(&admin, &0i128);
+
+    assert_eq!(client.get_creation_fee(), 0i128);
+}
+
+/// Test 3: A negative fee fails with InvalidFee.
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_negative_creation_fee_fails_with_invalid_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.set_creation_fee(&admin, &-1i128);
+}
+
+/// Test 3b: A rejected negative fee must leave the stored fee untouched.
+#[test]
+fn test_negative_creation_fee_does_not_change_stored_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+    client.set_creation_fee(&admin, &500i128);
+
+    assert!(client.try_set_creation_fee(&admin, &-1i128).is_err());
+    assert_eq!(
+        client.get_creation_fee(),
+        500i128,
+        "A rejected fee update must not overwrite the stored fee"
+    );
+}
+
+/// Test 4: A non-admin caller fails with UnauthorizedAdmin.
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_non_admin_cannot_set_creation_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.set_creation_fee(&non_admin, &500i128);
+}
+
+/// Test 4b: Setting the fee before any admin is configured fails with AdminNotSet.
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_set_creation_fee_without_admin_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let caller = Address::generate(&env);
+    client.set_creation_fee(&caller, &500i128);
+}
+
+/// Test 5: A fee update emits the fee-updated event carrying the new fee.
+#[test]
+fn test_set_creation_fee_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.set_creation_fee(&admin, &750i128);
+
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected a fee-updated event");
+
+    assert_eq!(event_contract, contract_id);
+    assert_eq!(topics, (symbol_short!("fee_upd"),).into_val(&env));
+    assert_eq!(
+        i128::try_from_val(&env, &data).expect("fee-updated event data should be an i128"),
+        750i128
+    );
+}
+
+/// Test 6: The getter defaults to zero and then reflects each update.
+#[test]
+fn test_get_creation_fee_returns_updated_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    // Defaults to 0 before any fee has been configured.
+    assert_eq!(client.get_creation_fee(), 0i128);
+
+    client.set_creation_fee(&admin, &100i128);
+    assert_eq!(client.get_creation_fee(), 100i128);
+
+    // A later update overwrites the previous value.
+    client.set_creation_fee(&admin, &250i128);
+    assert_eq!(client.get_creation_fee(), 250i128);
+}
+
+// ============= ISSUE #1062: POOL CONTRIBUTION GETTER VALIDATION TESTS =============
+
+/// Test 1: A contributor with no donations returns 0.
+#[test]
+fn test_get_contribution_with_no_donations_returns_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Empty Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_contribution(&pool_id, &donor), 0u128);
+}
+
+/// Test 2: A contributor with multiple donations returns their sum.
+#[test]
+fn test_get_contribution_with_multiple_donations_returns_sum() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token = create_token(&env, 100_000_000i128, &donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate_with_token(&pool_id, &donor, &token, &10_000_000i128);
+    client.donate_with_token(&pool_id, &donor, &token, &25_000_000i128);
+    client.donate_with_token(&pool_id, &donor, &token, &5_000_000i128);
+
+    assert_eq!(
+        client.get_contribution(&pool_id, &donor),
+        40_000_000u128,
+        "Repeat donations must accumulate for the same donor"
+    );
+}
+
+/// Test 3: An address that never donated to an existing pool returns 0.
+#[test]
+fn test_get_contribution_for_nonexistent_contributor_returns_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let token = create_token(&env, 100_000_000i128, &donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate_with_token(&pool_id, &donor, &token, &10_000_000i128);
+
+    // The pool has a contribution recorded, but not for this address.
+    assert_eq!(client.get_contribution(&pool_id, &stranger), 0u128);
+}
+
+/// Test 4: Querying a pool that does not exist fails with PoolNotFound.
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_get_contribution_for_nonexistent_pool_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let donor = Address::generate(&env);
+
+    // Pool 999 was never created.
+    client.get_contribution(&999u32, &donor);
+}
+
+/// Test 5: Multiple contributors to one pool are tracked separately.
+#[test]
+fn test_get_contribution_tracks_multiple_contributors_separately() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+    let token_a = create_token(&env, 100_000_000i128, &donor_a);
+    let token_b = create_token(&env, 100_000_000i128, &donor_b);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Shared Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate_with_token(&pool_id, &donor_a, &token_a, &10_000_000i128);
+    client.donate_with_token(&pool_id, &donor_b, &token_b, &30_000_000i128);
+    client.donate_with_token(&pool_id, &donor_a, &token_a, &5_000_000i128);
+
+    assert_eq!(client.get_contribution(&pool_id, &donor_a), 15_000_000u128);
+    assert_eq!(client.get_contribution(&pool_id, &donor_b), 30_000_000u128);
+
+    // Per-donor totals must add up to the pool total.
+    assert_eq!(client.get_total_raised(&pool_id), 45_000_000u128);
+}
+
+/// Test 5b: Contributions are scoped per pool, not shared across pools.
+#[test]
+fn test_get_contribution_is_scoped_per_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token = create_token(&env, 100_000_000i128, &donor);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool A"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    let pool_b = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool B"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate_with_token(&pool_a, &donor, &token, &10_000_000i128);
+
+    assert_eq!(client.get_contribution(&pool_a, &donor), 10_000_000u128);
+    assert_eq!(
+        client.get_contribution(&pool_b, &donor),
+        0u128,
+        "A donation to one pool must not appear in another"
+    );
 }
