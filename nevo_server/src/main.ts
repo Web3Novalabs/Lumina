@@ -29,6 +29,8 @@ async function bootstrap() {
     )
     .addTag('auth', 'Stellar wallet challenge/response authentication')
     .addTag('pools', 'Donation pools')
+    .addTag('transactions', 'Signed transaction submission')
+    .addTag('contract', 'Smart contract transaction submission')
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api-docs', app, document);
