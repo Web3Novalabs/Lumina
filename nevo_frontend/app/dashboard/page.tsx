@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { signTransaction } from '@stellar/freighter-api';
 import { useWalletStore } from '@/src/store/walletStore';
@@ -10,7 +10,25 @@ import { WalletAddress } from '@/components/WalletAddress';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
-import { signTransaction } from '@stellar/freighter-api';
+
+// TODO: replace with real imports once backend endpoints are implemented
+const apiClient = {
+  get: async <T,>(_: string): Promise<T> => {
+    throw new Error('not implemented');
+  },
+};
+const withdrawPool = async (_: string) => {
+  throw new Error('not implemented');
+};
+const closePool = async (_: string) => {
+  throw new Error('not implemented');
+};
+const submitSignedXdr = async (_: string) => {
+  throw new Error('not implemented');
+};
+const archiveSelectedPools = () => {
+  /* TODO: implement */
+};
 
 // TODO: Replace with real API call once backend pool endpoints are implemented
 const MOCK_CREATOR_POOLS: Pool[] = [
