@@ -1,4 +1,9 @@
-import React, { forwardRef, TextareaHTMLAttributes, useId } from 'react';
+import React, {
+  forwardRef,
+  TextareaHTMLAttributes,
+  useId,
+  useState,
+} from 'react';
 import { FormField } from './FormField';
 import { getControlClassName } from './form-styles';
 
@@ -26,6 +31,24 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
     const generatedId = useId();
     const id = idProp ?? generatedId;
     const hasError = Boolean(error);
+    const maxLength = props.maxLength;
+    const [charCount, setCharCount] = useState(() => {
+      if (
+        typeof props.defaultValue === 'string' ||
+        typeof props.defaultValue === 'number'
+      ) {
+        return String(props.defaultValue).length;
+      }
+      if (typeof props.value === 'string' || typeof props.value === 'number') {
+        return String(props.value).length;
+      }
+      return 0;
+    });
+
+    const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      setCharCount(e.target.value.length);
+      props.onChange?.(e);
+    };
 
     const textarea = (
       <textarea
@@ -40,24 +63,39 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           `${className} resize-y`.trim()
         )}
         {...props}
+        onChange={handleChange}
       />
     );
 
+    const counter = maxLength ? (
+      <span className="mt-1 block text-right text-xs text-[var(--color-text-muted)]">
+        {charCount}/{maxLength}
+      </span>
+    ) : null;
+
     if (label || helperText || error) {
       return (
-        <FormField
-          id={id}
-          label={label}
-          helperText={helperText}
-          error={error}
-          required={required}
-        >
-          {textarea}
-        </FormField>
+        <div>
+          <FormField
+            id={id}
+            label={label}
+            helperText={helperText}
+            error={error}
+            required={required}
+          >
+            {textarea}
+          </FormField>
+          {counter}
+        </div>
       );
     }
 
-    return textarea;
+    return (
+      <>
+        {textarea}
+        {counter}
+      </>
+    );
   }
 );
 

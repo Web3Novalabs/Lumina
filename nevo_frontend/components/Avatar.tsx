@@ -1,4 +1,5 @@
-import React, { FC, useState } from 'react';
+import React, { FC } from 'react';
+import Image from 'next/image';
 
 export interface AvatarProps {
   name?: string;
@@ -7,11 +8,13 @@ export interface AvatarProps {
   className?: string;
 }
 
-const sizes = {
+const cssSizes = {
   sm: 'h-8 w-8 text-xs',
   md: 'h-10 w-10 text-sm',
   lg: 'h-14 w-14 text-base',
 };
+
+const avatarDimensions = { sm: 32, md: 40, lg: 56 };
 
 function getInitials(name?: string): string {
   if (!name) return '?';
@@ -27,46 +30,24 @@ export const Avatar: FC<AvatarProps> = ({
   size = 'md',
   className = '',
 }) => {
-  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>(
-    src ? 'loading' : 'error'
-  );
-  const base = `inline-flex items-center justify-center rounded-full overflow-hidden shrink-0 ${sizes[size]} ${className}`;
+  const dim = avatarDimensions[size];
+  const base = `inline-flex items-center justify-center rounded-full overflow-hidden shrink-0 ${cssSizes[size]} ${className}`;
 
-  if (status === 'loading') {
-    return (
-      <span
-        className={`${base} bg-gray-200 animate-pulse`}
-        aria-label="Loading avatar"
-        role="img"
-      >
-        {src && (
-          <img
-            src={src}
-            alt={name ?? 'User avatar'}
-            className="h-full w-full object-cover"
-            onLoad={() => setStatus('loaded')}
-            onError={() => setStatus('error')}
-            style={{ display: 'none' }}
-          />
-        )}
-      </span>
-    );
-  }
-
-  if (src && status === 'loaded') {
+  if (src) {
     return (
       <span className={base}>
-        <img
+        <Image
           src={src}
           alt={name ?? 'User avatar'}
+          width={dim}
+          height={dim}
           className="h-full w-full object-cover"
-          onError={() => setStatus('error')}
+          unoptimized
         />
       </span>
     );
   }
 
-  // fallback: initials
   return (
     <span
       className={`${base} bg-blue-600 text-white font-medium select-none`}

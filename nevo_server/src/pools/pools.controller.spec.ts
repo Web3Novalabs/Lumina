@@ -8,6 +8,9 @@ import { DonationsService } from '../donations/donations.service';
 import { ContractService } from '../contract/contract.service';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { FilterPoolsDto } from './dto/filter-pools.dto';
+import { CreatePoolDto } from './dto/create-pool.dto';
+import { UpdatePoolDto } from './dto/update-pool.dto';
+import { DonatePoolDto } from './dto/donate-pool.dto';
 
 describe('PoolsController', () => {
   let controller: PoolsController;
@@ -28,11 +31,20 @@ describe('PoolsController', () => {
                 limit: query.limit ?? 20,
               }),
             ),
+            findOneMerged: jest.fn(),
+            create: jest.fn(),
+            updateMeta: jest.fn(),
+            findByContractId: jest.fn(),
+            buildWithdrawTx: jest.fn(),
+            buildClosePoolTx: jest.fn(),
           },
         },
         {
           provide: ContractService,
-          useValue: {},
+          useValue: {
+            buildDonateTransaction: jest.fn(),
+            buildClosePoolTransaction: jest.fn(),
+          },
         },
         {
           provide: JwtService,
@@ -58,6 +70,63 @@ describe('PoolsController', () => {
     expect(spy).toHaveBeenCalledWith(query);
     expect(result.page).toBe(2);
     expect(result.limit).toBe(5);
+  });
+
+  describe('findOne', () => {
+    it('should return a pool when found', async () => {
+      const mockPool = { contractPoolId: '1', title: 'Test Pool' };
+      jest.spyOn(service, 'findOneMerged').mockResolvedValue(mockPool);
+
+      const result = await controller.findOne('1');
+
+      expect(result).toEqual(mockPool);
+      expect(service.findOneMerged).toHaveBeenCalledWith('1');
+    });
+
+    it('should throw NotFoundException when pool not found', async () => {
+      jest.spyOn(service, 'findOneMerged').mockResolvedValue(null);
+
+      await expect(controller.findOne('999')).rejects.toThrow('Pool not found');
+    });
+  });
+
+  describe('create', () => {
+    it('should create a pool', async () => {
+      const dto: CreatePoolDto = {
+        contractPoolId: '1',
+        creatorWallet: 'GCREATOR',
+        title: 'Test Pool',
+        description: 'Test Description',
+        goal: '1000000000',
+      };
+      const mockPool = { contractPoolId: '1', ...dto };
+      jest.spyOn(service, 'create').mockResolvedValue(mockPool);
+
+      const result = await controller.create(dto);
+
+      expect(result).toEqual(mockPool);
+      expect(service.create).toHaveBeenCalledWith(dto);
+    });
+  });
+
+  describe('updateMeta', () => {
+    it('should update pool metadata', async () => {
+      const dto: UpdatePoolDto = { description: 'Updated description' };
+      const mockPool = { contractPoolId: '1', description: 'Updated description' };
+      jest.spyOn(service, 'updateMeta').mockResolvedValue(mockPool);
+
+      const result = await controller.updateMeta('1', dto);
+
+      expect(result).toEqual(mockPool);
+      expect(service.updateMeta).toHaveBeenCalledWith('1', dto);
+    });
+
+    it('should throw NotFoundException when pool not found', async () => {
+      const dto: UpdatePoolDto = { description: 'Updated description' };
+      jest.spyOn(service, 'updateMeta').mockResolvedValue(null);
+
+      await expect(controller.updateMeta('999', dto)).rejects.toThrow('Pool not found');
+    });
   });
 });
 
@@ -137,5 +206,191 @@ describe('PoolsController (withdraw auth)', () => {
       .expect(403);
 
     expect(poolsService.buildWithdrawTx).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when pool does not exist for withdraw', async () => {
+    poolsService.findByContractId.mockResolvedValue(null);
+    const token = signToken('GCREATOR');
+
+    await request(app.getHttpServer())
+      .post('/pools/999/withdraw')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+
+    expect(poolsService.buildWithdrawTx).not.toHaveBeenCalled();
+  });
+});
+
+describe('PoolsController (close auth)', () => {
+  let app: INestApplication;
+  let poolsService: {
+    findByContractId: jest.Mock;
+    buildClosePoolTx: jest.Mock;
+  };
+  const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret';
+  const signToken = (sub: string) =>
+    new JwtService({ secret: jwtSecret }).sign({ sub });
+
+  beforeEach(async () => {
+    poolsService = {
+      findByContractId: jest.fn(),
+      buildClosePoolTx: jest.fn(),
+    };
+
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      controllers: [PoolsController],
+      providers: [
+        { provide: PoolsService, useValue: poolsService },
+        { provide: DonationsService, useValue: {} },
+        { provide: ContractService, useValue: {} },
+        { provide: JwtService, useValue: {} },
+        JwtStrategy,
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('rejects an unauthenticated close request', async () => {
+    await request(app.getHttpServer())
+      .post('/pools/1/close')
+      .expect(401);
+
+    expect(poolsService.findByContractId).not.toHaveBeenCalled();
+  });
+
+  it('allows close when JWT wallet is the pool creator', async () => {
+    poolsService.findByContractId.mockResolvedValue({
+      contractPoolId: '1',
+      creatorWallet: 'GCREATOR',
+    });
+    poolsService.buildClosePoolTx.mockReturnValue({
+      unsignedXdr: 'xdr',
+    });
+    const token = signToken('GCREATOR');
+
+    await request(app.getHttpServer())
+      .post('/pools/1/close')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+
+    expect(poolsService.buildClosePoolTx).toHaveBeenCalled();
+  });
+
+  it('forbids close when the JWT wallet is not the pool creator', async () => {
+    poolsService.findByContractId.mockResolvedValue({
+      contractPoolId: '1',
+      creatorWallet: 'GCREATOR',
+    });
+    const token = signToken('GATTACKER');
+
+    await request(app.getHttpServer())
+      .post('/pools/1/close')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(403);
+
+    expect(poolsService.buildClosePoolTx).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when pool does not exist for close', async () => {
+    poolsService.findByContractId.mockResolvedValue(null);
+    const token = signToken('GCREATOR');
+
+    await request(app.getHttpServer())
+      .post('/pools/999/close')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+
+    expect(poolsService.buildClosePoolTx).not.toHaveBeenCalled();
+  });
+});
+
+describe('PoolsController (donate auth)', () => {
+  let app: INestApplication;
+  let poolsService: {
+    findByContractId: jest.Mock;
+  };
+  let contractService: {
+    buildDonateTransaction: jest.Mock;
+  };
+  const jwtSecret = process.env.JWT_SECRET ?? 'dev-secret';
+  const signToken = (sub: string) =>
+    new JwtService({ secret: jwtSecret }).sign({ sub });
+
+  beforeEach(async () => {
+    poolsService = {
+      findByContractId: jest.fn(),
+    };
+    contractService = {
+      buildDonateTransaction: jest.fn(),
+    };
+
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      controllers: [PoolsController],
+      providers: [
+        { provide: PoolsService, useValue: poolsService },
+        { provide: DonationsService, useValue: {} },
+        { provide: ContractService, useValue: contractService },
+        { provide: JwtService, useValue: {} },
+        JwtStrategy,
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('rejects an unauthenticated donate request', async () => {
+    await request(app.getHttpServer())
+      .post('/pools/1/donate')
+      .expect(401);
+
+    expect(poolsService.findByContractId).not.toHaveBeenCalled();
+  });
+
+  it('builds donation transaction for authenticated user', async () => {
+    poolsService.findByContractId.mockResolvedValue({
+      contractPoolId: '1',
+      creatorWallet: 'GCREATOR',
+    });
+    contractService.buildDonateTransaction.mockReturnValue('unsigned_xdr');
+    const token = signToken('GDONOR');
+    const dto: DonatePoolDto = { amount: '10000000' };
+
+    await request(app.getHttpServer())
+      .post('/pools/1/donate')
+      .set('Authorization', `Bearer ${token}`)
+      .send(dto)
+      .expect(201)
+      .expect({ unsignedXdr: 'unsigned_xdr' });
+
+    expect(contractService.buildDonateTransaction).toHaveBeenCalledWith(
+      'GDONOR',
+      1,
+      '10000000',
+    );
+  });
+
+  it('returns 404 when pool does not exist for donate', async () => {
+    poolsService.findByContractId.mockResolvedValue(null);
+    const token = signToken('GDONOR');
+    const dto: DonatePoolDto = { amount: '10000000' };
+
+    await request(app.getHttpServer())
+      .post('/pools/999/donate')
+      .set('Authorization', `Bearer ${token}`)
+      .send(dto)
+      .expect(404);
+
+    expect(contractService.buildDonateTransaction).not.toHaveBeenCalled();
   });
 });

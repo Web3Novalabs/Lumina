@@ -11,6 +11,7 @@ import React, {
   useRef,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { XIcon } from '@/components/icons';
 
 export interface ModalProps {
   /** Whether the modal is open */
@@ -202,28 +203,6 @@ export const Modal: FC<ModalProps> = ({
 
   return createPortal(panel, document.body);
 };
-
-/* ── X Icon ───────────────────────────────────────────────────────────────── */
-
-function XIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={2}
-      stroke="currentColor"
-      className="size-4"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M6 18 18 6M6 6l12 12"
-      />
-    </svg>
-  );
-}
 
 /* ── Keyframe styles injected once ────────────────────────────────────────── */
 // These are Tailwind v4 arbitrary keyframe animations defined via @keyframes in globals.css.
