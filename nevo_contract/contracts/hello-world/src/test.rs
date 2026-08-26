@@ -555,7 +555,10 @@ fn test_withdraw_unallocated_funds_respects_locked_funds_regression_949() {
 
     // Total collected: 80_000_000 (leaving 20_000_000 unallocated)
     let pool_info = client.get_pool(&pool_id);
-    assert_eq!(pool_info.3, 80_000_000u128, "Pool should have 80M collected");
+    assert_eq!(
+        pool_info.3, 80_000_000u128,
+        "Pool should have 80M collected"
+    );
 
     // Step 2: Student applies and gets approved for a portion
     let student = Address::generate(&env);
@@ -595,10 +598,7 @@ fn test_withdraw_unallocated_funds_respects_locked_funds_regression_949() {
     // Now update the application to have a higher approved amount for testing
     // (This simulates what would happen in a real workflow)
     let app = client.get_application(&pool_id, &student);
-    assert!(
-        app.is_some(),
-        "Application record should exist after claim"
-    );
+    assert!(app.is_some(), "Application record should exist after claim");
 
     let app_record = app.unwrap();
     assert_eq!(
@@ -636,4 +636,329 @@ fn test_withdraw_unallocated_funds_respects_locked_funds_regression_949() {
     // This test passes because the storage key is now correct with Symbol::new()
     // If the bug existed, the locked funds would be computed as 0, and
     // the contract would attempt to transfer 80M, failing the assertion above
+}
+
+// ============= CAMPAIGN LIST MANAGEMENT TESTS (#1086) =============
+
+#[test]
+fn test_get_all_campaigns_empty_initially() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let campaigns = client.get_all_campaigns();
+    assert_eq!(campaigns.len(), 0);
+}
+
+#[test]
+fn test_get_all_campaigns_single_campaign() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    client.create_pool(
+        &creator,
+        &String::from_str(&env, "Solo Campaign"),
+        &String::from_str(&env, "Only one"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let campaigns = client.get_all_campaigns();
+    assert_eq!(campaigns.len(), 1);
+    let campaign = campaigns.get(0).unwrap();
+    assert_eq!(campaign.sponsor, creator);
+    assert_eq!(campaign.goal, 1_000_000_000u128);
+}
+
+#[test]
+fn test_get_all_campaigns_multiple_campaigns() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    client.create_pool(
+        &Address::generate(&env),
+        &String::from_str(&env, "Campaign 1"),
+        &String::from_str(&env, "First"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.create_pool(
+        &Address::generate(&env),
+        &String::from_str(&env, "Campaign 2"),
+        &String::from_str(&env, "Second"),
+        &2_000_000_000u128,
+        &100_000u64,
+    );
+    client.create_pool(
+        &Address::generate(&env),
+        &String::from_str(&env, "Campaign 3"),
+        &String::from_str(&env, "Third"),
+        &3_000_000_000u128,
+        &100_000u64,
+    );
+
+    let campaigns = client.get_all_campaigns();
+    assert_eq!(campaigns.len(), 3);
+}
+
+#[test]
+fn test_get_all_campaigns_preserves_creation_order() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator1 = Address::generate(&env);
+    let creator2 = Address::generate(&env);
+    let creator3 = Address::generate(&env);
+
+    client.create_pool(
+        &creator1,
+        &String::from_str(&env, "First"),
+        &String::from_str(&env, "d"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.create_pool(
+        &creator2,
+        &String::from_str(&env, "Second"),
+        &String::from_str(&env, "d"),
+        &2_000_000_000u128,
+        &100_000u64,
+    );
+    client.create_pool(
+        &creator3,
+        &String::from_str(&env, "Third"),
+        &String::from_str(&env, "d"),
+        &3_000_000_000u128,
+        &100_000u64,
+    );
+
+    let campaigns = client.get_all_campaigns();
+    assert_eq!(campaigns.get(0).unwrap().sponsor, creator1);
+    assert_eq!(campaigns.get(1).unwrap().sponsor, creator2);
+    assert_eq!(campaigns.get(2).unwrap().sponsor, creator3);
+}
+
+#[test]
+fn test_get_all_campaigns_updates_dynamically() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    assert_eq!(client.get_all_campaigns().len(), 0);
+
+    client.create_pool(
+        &Address::generate(&env),
+        &String::from_str(&env, "First"),
+        &String::from_str(&env, "d"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    assert_eq!(client.get_all_campaigns().len(), 1);
+
+    client.create_pool(
+        &Address::generate(&env),
+        &String::from_str(&env, "Second"),
+        &String::from_str(&env, "d"),
+        &2_000_000_000u128,
+        &100_000u64,
+    );
+    assert_eq!(client.get_all_campaigns().len(), 2);
+}
+
+// ============= DONATION COMPLETION TESTS (#1085) =============
+
+#[test]
+fn test_donate_to_incomplete_campaign_succeeds() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Active Campaign"),
+        &String::from_str(&env, "d"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate(&pool_id, &donor, &100_000_000u128);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.3, 100_000_000u128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_donate_to_completed_campaign_fails() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Small Goal"),
+        &String::from_str(&env, "d"),
+        &100_000_000u128,
+        &100_000u64,
+    );
+
+    // Fully fund the campaign in one donation.
+    client.donate(&pool_id, &donor, &100_000_000u128);
+    // A subsequent donation must be rejected: campaign already funded.
+    client.donate(&pool_id, &donor, &1u128);
+}
+
+#[test]
+fn test_donation_meeting_goal_completes_campaign() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let goal = 500_000_000u128;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Goal Campaign"),
+        &String::from_str(&env, "d"),
+        &goal,
+        &100_000u64,
+    );
+
+    client.donate(&pool_id, &donor, &goal);
+
+    let campaigns = client.get_all_campaigns();
+    let campaign = campaigns.get(0).unwrap();
+    assert_eq!(campaign.state, PoolState::Completed);
+    assert_eq!(campaign.collected, goal);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_donate_after_completion_fails() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor1 = Address::generate(&env);
+    let donor2 = Address::generate(&env);
+    let goal = 200_000_000u128;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Goal Campaign"),
+        &String::from_str(&env, "d"),
+        &goal,
+        &100_000u64,
+    );
+
+    client.donate(&pool_id, &donor1, &goal);
+    // Campaign is now Completed; any further donation attempt must fail.
+    client.donate(&pool_id, &donor2, &1u128);
+}
+
+// ============= POOL METADATA TESTS (#1081) =============
+
+#[test]
+fn test_get_pool_metadata_existing_pool() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let title = String::from_str(&env, "Library Renovation");
+    let description = String::from_str(&env, "Fixing the roof");
+    let pool_id = client.create_pool(
+        &creator,
+        &title,
+        &description,
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let (returned_title, returned_description) = client.get_pool_metadata(&pool_id);
+    assert_eq!(returned_title, title);
+    assert_eq!(returned_description, description);
+}
+
+#[test]
+fn test_get_pool_metadata_nonexistent_pool_returns_empty_strings() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let (title, description) = client.get_pool_metadata(&999);
+    assert_eq!(title, String::from_str(&env, ""));
+    assert_eq!(description, String::from_str(&env, ""));
+}
+
+#[test]
+fn test_get_pool_metadata_matches_saved_values() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let title = String::from_str(&env, "Exact Match Campaign");
+    let description = String::from_str(&env, "This description must match exactly");
+    let pool_id = client.create_pool(
+        &creator,
+        &title,
+        &description,
+        &2_500_000_000u128,
+        &50_000u64,
+    );
+
+    let (returned_title, returned_description) = client.get_pool_metadata(&pool_id);
+    assert_eq!(returned_title, title);
+    assert_eq!(returned_description, description);
+}
+
+#[test]
+fn test_get_pool_metadata_multiple_pools_are_independent() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator1 = Address::generate(&env);
+    let creator2 = Address::generate(&env);
+
+    let title1 = String::from_str(&env, "Pool One Title");
+    let description1 = String::from_str(&env, "Pool One Description");
+    let pool_id_1 = client.create_pool(
+        &creator1,
+        &title1,
+        &description1,
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let title2 = String::from_str(&env, "Pool Two Title");
+    let description2 = String::from_str(&env, "Pool Two Description");
+    let pool_id_2 = client.create_pool(
+        &creator2,
+        &title2,
+        &description2,
+        &2_000_000_000u128,
+        &100_000u64,
+    );
+
+    let (returned_title1, returned_description1) = client.get_pool_metadata(&pool_id_1);
+    let (returned_title2, returned_description2) = client.get_pool_metadata(&pool_id_2);
+
+    assert_eq!(returned_title1, title1);
+    assert_eq!(returned_description1, description1);
+    assert_eq!(returned_title2, title2);
+    assert_eq!(returned_description2, description2);
+
+    // Metadata must not bleed between pools.
+    assert_ne!(returned_title1, returned_title2);
+    assert_ne!(returned_description1, returned_description2);
 }

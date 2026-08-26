@@ -236,8 +236,12 @@ fn test_contribute_to_paused_pool_fails() {
 }
 
 /// Test 4: Contribute to a Completed pool fails (Issue #943)
+///
+/// Issue #1085: donating to a pool that already reached its funding goal
+/// now fails with the dedicated `CampaignAlreadyFunded` error instead of
+/// the generic `InvalidPoolState` error.
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
+#[should_panic(expected = "Error(Contract, #15)")]
 fn test_contribute_to_completed_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -257,7 +261,7 @@ fn test_contribute_to_completed_pool_fails() {
     );
     client.set_pool_state(&pool_id, &PoolState::Completed);
 
-    // Should fail with InvalidPoolState
+    // Should fail with CampaignAlreadyFunded
     client.donate_with_token(&pool_id, &donor, &token, &100_000_000i128);
 }
 

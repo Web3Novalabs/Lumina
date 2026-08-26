@@ -1,8 +1,8 @@
 #![cfg_attr(not(test), no_std)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
-    Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env,
+    String, Symbol, Vec,
 };
 
 // Storage key constants
@@ -40,8 +40,6 @@ const REFUND_GRACE_PERIOD_LEDGERS: u32 = 17_280; // ~24 hours at 5s/ledger
 
 // Pool metadata validation constraints
 const MAX_DESCRIPTION_LENGTH: usize = 500;
-const MAX_URL_LENGTH: usize = 256;
-const MAX_IMAGE_HASH_LENGTH: usize = 64;
 
 // ─── Event Topics ────────────────────────────────────────────────────────
 
@@ -103,6 +101,9 @@ pub enum ContractError {
     NoContributionToRefund = 13,
     /// School address has not been registered by an admin.
     SchoolNotRegistered = 14,
+    /// Campaign/pool has already reached its funding goal and is closed to
+    /// further donations.
+    CampaignAlreadyFunded = 15,
 }
 
 // Helper functions for timestamp/deadline edge-case tests
@@ -397,6 +398,12 @@ impl Contract {
             env.panic_with_error(ContractError::PoolIsClosed);
         }
 
+        // Campaigns that have already reached their funding goal reject
+        // further donations with a dedicated error.
+        if pool.state == PoolState::Completed {
+            env.panic_with_error(ContractError::CampaignAlreadyFunded);
+        }
+
         // TODO: Replace with real implementation from issue #XYZ
         // Pool state validation
         if pool.state != PoolState::Active {
@@ -404,12 +411,17 @@ impl Contract {
         }
 
         let new_collected = pool.collected + amount;
+        let new_state = if new_collected >= pool.goal {
+            PoolState::Completed
+        } else {
+            pool.state.clone()
+        };
         let updated_pool = Pool {
             sponsor: pool.sponsor,
             goal: pool.goal,
             collected: new_collected,
             is_closed: pool.is_closed,
-            state: pool.state,
+            state: new_state,
             application_deadline: pool.application_deadline,
         };
         env.storage().persistent().set(&pool_id, &updated_pool);
@@ -547,6 +559,20 @@ impl Contract {
             .persistent()
             .get::<_, u32>(&pool_count_key)
             .unwrap_or(0)
+    }
+
+    /// Get every campaign (pool) in the order they were created.
+    ///
+    /// Returns an empty `Vec` if no campaigns have been created yet.
+    pub fn get_all_campaigns(env: Env) -> Vec<Pool> {
+        let pool_count = Self::get_pool_count(env.clone());
+        let mut campaigns = Vec::new(&env);
+        for pool_id in 1..=pool_count {
+            if let Some(pool) = env.storage().persistent().get::<_, Pool>(&pool_id) {
+                campaigns.push_back(pool);
+            }
+        }
+        campaigns
     }
 
     /// Get the number of unique donors for a pool.
@@ -690,12 +716,18 @@ impl Contract {
             panic!("Milestone total must equal pool goal");
         }
 
-        let milestones_key = (Symbol::new(&env, MILESTONES_PREFIX), pool_id, student.clone());
+        let milestones_key = (
+            Symbol::new(&env, MILESTONES_PREFIX),
+            pool_id,
+            student.clone(),
+        );
         env.storage().persistent().set(&milestones_key, &milestones);
 
         // Issue #954: emit milestones-set event
-        env.events()
-            .publish((MILESTONES_SET, pool_id), (student.clone(), milestones.len()));
+        env.events().publish(
+            (MILESTONES_SET, pool_id),
+            (student.clone(), milestones.len()),
+        );
     }
 
     /// Get student milestones for a pool.
@@ -999,8 +1031,7 @@ impl Contract {
         env.storage().persistent().set(&unclaimed_fees_key, &0i128);
 
         // Issue #954: emit fees-claimed event
-        env.events()
-            .publish((FEES_CLAIMED, admin.clone()), (fees,));
+        env.events().publish((FEES_CLAIMED, admin.clone()), (fees,));
 
         fees
     }
@@ -1184,6 +1215,12 @@ impl Contract {
             env.panic_with_error(ContractError::PoolIsClosed);
         }
 
+        // Campaigns that have already reached their funding goal reject
+        // further donations with a dedicated error.
+        if pool.state == PoolState::Completed {
+            env.panic_with_error(ContractError::CampaignAlreadyFunded);
+        }
+
         // TODO: Replace with real implementation from issue #XYZ
         // Pool state validation
         if pool.state != PoolState::Active {
@@ -1202,12 +1239,17 @@ impl Contract {
             .checked_add(amount as u128)
             .expect("Collected amount overflow");
 
+        let new_state = if new_collected >= pool.goal {
+            PoolState::Completed
+        } else {
+            pool.state.clone()
+        };
         let updated_pool = Pool {
             sponsor: pool.sponsor,
             goal: pool.goal,
             collected: new_collected,
             is_closed: pool.is_closed,
-            state: pool.state,
+            state: new_state,
             application_deadline: pool.application_deadline,
         };
         env.storage().persistent().set(&pool_id, &updated_pool);
