@@ -323,6 +323,55 @@ impl Contract {
         pool_id
     }
 
+    /// Create a new donation / sponsorship pool, charging the configured creation fee.
+    ///
+    /// Reads the fee stored by `set_creation_fee`. If the fee is zero the token
+    /// transfer is skipped entirely. Otherwise the fee is transferred from
+    /// `creator` to the contract address before the pool is created.
+    ///
+    /// # Arguments
+    /// * `env`                  - The contract environment
+    /// * `creator`              - The address paying the fee and becoming pool sponsor
+    /// * `title`                - Pool title
+    /// * `description`          - Pool description (≤ 500 chars)
+    /// * `goal`                 - Fundraising goal (in token base units)
+    /// * `application_deadline` - Application deadline (ledger sequence number)
+    /// * `fee_token`            - The token address used to pay the creation fee
+    ///
+    /// # Returns
+    /// The newly assigned pool ID.
+    ///
+    /// # Panics
+    /// - `"Description exceeds maximum length"` if description > 500 chars
+    /// - Token transfer error if `creator` balance is insufficient for the fee
+    pub fn create_pool_with_fee(
+        env: Env,
+        creator: Address,
+        title: String,
+        description: String,
+        goal: u128,
+        application_deadline: u64,
+        fee_token: Address,
+    ) -> u32 {
+        creator.require_auth();
+
+        let fee_key = Symbol::new(&env, CREATION_FEE_KEY);
+        let fee: i128 = env
+            .storage()
+            .persistent()
+            .get::<_, i128>(&fee_key)
+            .unwrap_or(0);
+
+        // Only charge a fee when one has been configured (non-zero)
+        if fee > 0 {
+            let token_client = token::Client::new(&env, &fee_token);
+            token_client.transfer(&creator, &env.current_contract_address(), &fee);
+        }
+
+        // Delegate pool storage and event emission to create_pool
+        Self::create_pool(env, creator, title, description, goal, application_deadline)
+    }
+
     /// Create a new sponsorship pool linked to a registered school.
     pub fn create_pool_for_school(
         env: Env,
@@ -1329,3 +1378,6 @@ impl Contract {
 mod test;
 mod test_campaign_balance;
 mod test_issues;
+mod test_issue_1066_creation_fees;
+mod test_issue_1067_refund_deadline;
+mod test_issue_1063_donor_count;
