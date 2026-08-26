@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token::StellarAssetClient,
-    Address, BytesN, Env, String, Symbol,
+    Address, BytesN, Env, IntoVal, String, Symbol, TryIntoVal,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -972,4 +972,285 @@ fn test_get_pool_school_fails_for_non_school_pool() {
     );
 
     client.get_pool_school(&pool_id);
+}
+
+// ============= ISSUE #1069: REFUND CONTRIBUTION TRACKING TESTS =============
+//
+// `refund_donation()` (deadline/grace-period gating is covered by the
+// ISSUE #939 tests above) is exercised here for its post-refund
+// bookkeeping: the donor's token balance, their per-donor contribution
+// record in storage, the pool's aggregate `collected` total, and the
+// `DONATION_REFUND` ("don_refnd") event it emits with `(donor,
+// contribution)` data.
+
+/// Test 1: A donor with no recorded contribution in *this* pool cannot
+/// refund — even if they contributed to a different pool, proving the
+/// check is scoped per-pool. Panics with the contract's actual
+/// `ContractError::NoContributionToRefund` variant (error code #13).
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_refund_no_prior_contribution_fails_with_no_contribution_to_refund_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 50_000_000u128;
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    // Donor contributes to a different pool...
+    let other_pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Other Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&other_pool_id, &donor, &contribution);
+
+    // ...but has never contributed to this one.
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS);
+
+    // Donor has a contribution elsewhere, but zero here -> NoContributionToRefund.
+    client.refund_donation(&pool_id, &donor, &token);
+}
+
+/// Test 2: A successful refund transfers the donor's exact contribution
+/// back to them -- checked on both sides of the transfer, not just that
+/// the call succeeded.
+#[test]
+fn test_refund_transfers_full_contribution_back_to_donor() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 63_000_000u128;
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor, &contribution);
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS);
+
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(
+        token_client.balance(&donor),
+        0i128,
+        "donor should hold no tokens before the refund"
+    );
+    assert_eq!(token_client.balance(&contract_id), contribution as i128);
+
+    client.refund_donation(&pool_id, &donor, &token);
+
+    // The full contribution moved from the contract to the donor.
+    assert_eq!(
+        token_client.balance(&donor),
+        contribution as i128,
+        "donor must receive their full contribution back"
+    );
+    assert_eq!(
+        token_client.balance(&contract_id),
+        0i128,
+        "contract's token balance must decrease by exactly the refunded amount"
+    );
+}
+
+/// Test 3: After a refund, the donor's per-pool contribution record in
+/// storage is zeroed -- verified by reading it back via
+/// `get_contribution`, and further proven by the fact that a second
+/// refund attempt on the same pool is rejected with
+/// `NoContributionToRefund` (double-refund is impossible).
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_refund_zeroes_contribution_record_and_prevents_double_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 40_000_000u128;
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor, &contribution);
+    assert_eq!(client.get_contribution(&pool_id, &donor), contribution);
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS);
+
+    client.refund_donation(&pool_id, &donor, &token);
+
+    // The storage record is read back and must be zeroed after the refund.
+    assert_eq!(
+        client.get_contribution(&pool_id, &donor),
+        0u128,
+        "contribution record must be zeroed after refund"
+    );
+
+    // Nothing left to refund -> a second attempt must fail the same way.
+    client.refund_donation(&pool_id, &donor, &token);
+}
+
+/// Test 4: Refunding one donor decrements the pool's `collected` total by
+/// exactly their contribution, leaving another donor's contribution to the
+/// same pool untouched -- proving this is a targeted decrement, not a
+/// reset to zero.
+#[test]
+fn test_refund_decrements_pool_collected_by_exact_refunded_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+    let contribution_a = 30_000_000u128;
+    let contribution_b = 45_000_000u128;
+    // Only donor_a is refunded in this test, so the contract only needs
+    // enough real token balance to cover that one transfer.
+    let token = create_token(&env, contribution_a as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor_a, &contribution_a);
+    client.donate(&pool_id, &donor_b, &contribution_b);
+
+    let pool_before = client.get_pool(&pool_id);
+    assert_eq!(pool_before.3, contribution_a + contribution_b);
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS);
+
+    client.refund_donation(&pool_id, &donor_a, &token);
+
+    let pool_after = client.get_pool(&pool_id);
+    assert_eq!(
+        pool_after.3, contribution_b,
+        "pool.collected must be decremented by exactly donor_a's contribution"
+    );
+    // donor_b's own contribution record is untouched by donor_a's refund.
+    assert_eq!(client.get_contribution(&pool_id, &donor_b), contribution_b);
+}
+
+/// Test 5: A successful refund emits `DONATION_REFUND` ("don_refnd") with
+/// the full expected payload -- the contributor and the exact amount
+/// refunded, tagged with the pool id in the topics.
+#[test]
+fn test_refund_emits_donation_refund_event_with_correct_fields() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 55_000_000u128;
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor, &contribution);
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS);
+
+    let events_before_refund = env.events().all().len();
+    client.refund_donation(&pool_id, &donor, &token);
+
+    let all_events = env.events().all();
+    assert_eq!(
+        all_events.len(),
+        events_before_refund + 1,
+        "refund_donation() should emit exactly one event"
+    );
+
+    let event = all_events.get(all_events.len() - 1).unwrap();
+    assert_eq!(event.0, contract_id, "event should come from the contract");
+    assert_eq!(
+        event.1,
+        (DONATION_REFUND, pool_id).into_val(&env),
+        "refund must use the DONATION_REFUND topic, tagged with the pool id"
+    );
+    assert_eq!(
+        event.2,
+        (donor.clone(), contribution).into_val(&env),
+        "refund event data must be (donor, refunded_amount)"
+    );
+
+    // Decode the fields individually to make the assertion explicit.
+    let (refunded_donor, refunded_amount): (Address, u128) =
+        event.2.clone().try_into_val(&env).unwrap();
+    assert_eq!(
+        refunded_donor, donor,
+        "event must name the correct contributor"
+    );
+    assert_eq!(
+        refunded_amount, contribution,
+        "event must carry the exact amount that was refunded"
+    );
 }
