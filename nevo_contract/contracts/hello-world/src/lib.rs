@@ -1331,5 +1331,9 @@ impl Contract {
 }
 
 mod test;
+mod test_auth_bypass;
 mod test_issues;
+mod test_numeric_overflow;
 mod test_register_school;
+mod test_timestamp_edge_cases;
+mod test_token_transfer_errors;
