@@ -20,6 +20,11 @@ async function bootstrap() {
     }),
   );
 
+  // Enable graceful shutdown hooks
+  // This ensures in-flight requests, DB connections, and scheduled tasks
+  // are drained cleanly before the process exits on SIGTERM/SIGINT
+  app.enableShutdownHooks();
+
   const port = process.env.PORT || 3001;
   await app.listen(port);
   console.log(`✅ Server running on http://localhost:${port}`);
