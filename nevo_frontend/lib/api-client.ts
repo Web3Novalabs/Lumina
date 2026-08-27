@@ -1,4 +1,20 @@
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+import {
+  ClientRateLimiter,
+  DEFAULT_RATE_LIMIT_OPTIONS,
+  RateLimitError,
+  type RateLimitOptions,
+  isRateLimitError,
+  notifyRateLimit,
+  parseRetryAfterHeader,
+  resolveRateLimitOptions,
+} from './rate-limit';
+import { env, validatePublicEnv } from './env';
+import { getToken } from './auth-storage';
+import { toast } from '../components/Toast';
+
+validatePublicEnv();
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 export interface RequestConfig extends Omit<RequestInit, 'method' | 'body'> {
   params?: Record<string, string | number | boolean | undefined>;
@@ -7,6 +23,11 @@ export interface RequestConfig extends Omit<RequestInit, 'method' | 'body'> {
   retryDelay?: number;
   body?: unknown;
   requireAuth?: boolean;
+  rateLimit?: false | Partial<RateLimitOptions>;
+  rateLimitKey?: string;
+  skipRateLimitNotification?: boolean;
+  cacheResponse?: boolean;
+  cacheTtlMs?: number;
 }
 
 export class ApiError extends Error {
@@ -20,25 +41,74 @@ export class ApiError extends Error {
   }
 }
 
+export class UnauthorizedError extends ApiError {
+  constructor(message: string, data?: unknown) {
+    super(401, message, data);
+    this.name = 'UnauthorizedError';
+  }
+}
+
 type Interceptor<T> = (data: T) => T | Promise<T>;
 
-class ApiClient {
+type PreparedRequestConfig = RequestConfig & {
+  url: string;
+  method: string;
+  headers: Headers;
+  body?: BodyInit;
+};
+
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+const DEFAULT_CACHE_TTL_MS = 15_000;
+const DEFAULT_RATE_LIMIT_KEY = 'api';
+
+export class ApiClient {
   private baseURL: string;
   private defaultTimeout: number;
+  private defaultRateLimit: RateLimitOptions;
+  private rateLimiter: ClientRateLimiter;
+  private responseCache = new Map<string, CacheEntry<unknown>>();
   private activeRequests = 0;
   private loadingListeners: Set<(loading: boolean) => void> = new Set();
 
-  public requestInterceptors: Interceptor<
-    RequestConfig & { url: string; method: string }
-  >[] = [];
+  public requestInterceptors: Interceptor<PreparedRequestConfig>[] = [];
   public responseInterceptors: Interceptor<Response>[] = [];
 
-  constructor(baseURL: string = '', defaultTimeout: number = 10000) {
-    this.baseURL =
-      baseURL ||
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      'http://localhost:3000';
+  constructor(
+    baseURL: string = '',
+    defaultTimeout: number = 10_000,
+    rateLimit: Partial<RateLimitOptions> = DEFAULT_RATE_LIMIT_OPTIONS
+  ) {
+    this.baseURL = baseURL || env.NEXT_PUBLIC_API_BASE_URL;
     this.defaultTimeout = defaultTimeout;
+    this.defaultRateLimit = resolveRateLimitOptions(rateLimit);
+    this.rateLimiter = new ClientRateLimiter();
+    this.addRequestInterceptor((config) =>
+      this.attachAuthorizationHeader(config)
+    );
+  }
+
+  private attachAuthorizationHeader(
+    config: PreparedRequestConfig
+  ): PreparedRequestConfig {
+    if (config.requireAuth === false) {
+      return config;
+    }
+
+    const headers = new Headers(config.headers);
+    const accessToken = getToken();
+
+    if (accessToken) {
+      headers.set('Authorization', `Bearer ${accessToken}`);
+    }
+
+    return {
+      ...config,
+      headers,
+    };
   }
 
   private startRequest() {
@@ -81,9 +151,7 @@ class ApiClient {
   }
 
   // Interceptors
-  addRequestInterceptor(
-    interceptor: Interceptor<RequestConfig & { url: string; method: string }>
-  ) {
+  addRequestInterceptor(interceptor: Interceptor<PreparedRequestConfig>) {
     this.requestInterceptors.push(interceptor);
   }
 
@@ -91,9 +159,7 @@ class ApiClient {
     this.responseInterceptors.push(interceptor);
   }
 
-  private async applyRequestInterceptors(
-    config: RequestConfig & { url: string; method: string }
-  ) {
+  private async applyRequestInterceptors(config: PreparedRequestConfig) {
     let currentConfig = { ...config };
     for (const interceptor of this.requestInterceptors) {
       currentConfig = await interceptor(currentConfig);
@@ -109,6 +175,155 @@ class ApiClient {
     return currentResponse;
   }
 
+  public getRateLimitStatus(
+    key: string = DEFAULT_RATE_LIMIT_KEY,
+    options: Partial<RateLimitOptions> = {}
+  ) {
+    return this.rateLimiter.getStatus(
+      key,
+      resolveRateLimitOptions({ ...this.defaultRateLimit, ...options })
+    );
+  }
+
+  public clearResponseCache() {
+    this.responseCache.clear();
+  }
+
+  public resetRateLimits(key?: string) {
+    this.rateLimiter.reset(key);
+  }
+
+  private buildUrl(
+    endpoint: string,
+    params?: Record<string, string | number | boolean | undefined>
+  ) {
+    let url = `${this.baseURL}${endpoint}`;
+
+    if (!params) return url;
+
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, String(value));
+      }
+    });
+
+    const queryString = searchParams.toString();
+    if (queryString) {
+      url += `?${queryString}`;
+    }
+
+    return url;
+  }
+
+  private buildRequestConfig(
+    endpoint: string,
+    method: HttpMethod,
+    config: RequestConfig
+  ): PreparedRequestConfig {
+    const { params, body, ...customInit } = config;
+    const headers = new Headers(customInit.headers || {});
+
+    if (
+      !headers.has('Content-Type') &&
+      body !== undefined &&
+      !(body instanceof FormData)
+    ) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (!headers.has('Accept')) {
+      headers.set('Accept', 'application/json');
+    }
+
+    return {
+      ...customInit,
+      url: this.buildUrl(endpoint, params),
+      method,
+      headers,
+      body:
+        body !== undefined
+          ? body instanceof FormData
+            ? body
+            : JSON.stringify(body)
+          : undefined,
+    } as PreparedRequestConfig;
+  }
+
+  private getCacheKey(config: PreparedRequestConfig) {
+    const walletKey = config.headers.get('X-Wallet-Pubkey') ?? 'anonymous';
+    return `${config.method}:${config.url}:wallet=${walletKey}`;
+  }
+
+  private getCachedResponse<T>(key: string): T | undefined {
+    const cached = this.responseCache.get(key);
+    if (!cached) return undefined;
+
+    if (Date.now() >= cached.expiresAt) {
+      this.responseCache.delete(key);
+      return undefined;
+    }
+
+    return cached.data as T;
+  }
+
+  private setCachedResponse<T>(key: string, data: T, cacheTtlMs: number) {
+    if (cacheTtlMs <= 0) return;
+
+    this.responseCache.set(key, {
+      data,
+      expiresAt: Date.now() + cacheTtlMs,
+    });
+  }
+
+  private enforceRateLimit(
+    config: PreparedRequestConfig,
+    endpoint: string,
+    notify: boolean
+  ) {
+    if (config.rateLimit === false) return;
+
+    const options = resolveRateLimitOptions({
+      ...this.defaultRateLimit,
+      ...config.rateLimit,
+    });
+    const result = this.rateLimiter.consume(
+      config.rateLimitKey ?? DEFAULT_RATE_LIMIT_KEY,
+      options
+    );
+
+    if (!result.allowed) {
+      const error = new RateLimitError(result, endpoint);
+      if (notify) {
+        notifyRateLimit(error);
+      }
+      throw error;
+    }
+  }
+
+  private createServerRateLimitError(
+    response: Response,
+    endpoint: string
+  ): RateLimitError {
+    const retryAfterMs =
+      parseRetryAfterHeader(response.headers.get('Retry-After')) ??
+      this.defaultRateLimit.windowMs;
+
+    return new RateLimitError(
+      {
+        ...this.defaultRateLimit,
+        allowed: false,
+        remaining: 0,
+        resetAt: Date.now() + retryAfterMs,
+        retryAfterMs,
+      },
+      endpoint
+    );
+  }
+
+  private getBackoffMs(retryDelay: number, attempt: number) {
+    return retryDelay * 2 ** Math.max(0, attempt - 1);
+  }
+
   // Core request method
   async request<T>(
     endpoint: string,
@@ -118,53 +333,31 @@ class ApiClient {
     this.startRequest();
     try {
       const {
-        params,
         timeout = this.defaultTimeout,
         retries = 3,
         retryDelay = 1000,
-        body,
-        ...customInit
+        cacheResponse = true,
+        cacheTtlMs = DEFAULT_CACHE_TTL_MS,
+        skipRateLimitNotification = false,
       } = config;
 
-      let url = `${this.baseURL}${endpoint}`;
-
-      // Add query params
-      if (params) {
-        const searchParams = new URLSearchParams();
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined) {
-            searchParams.append(key, String(value));
-          }
-        });
-        const queryString = searchParams.toString();
-        if (queryString) {
-          url += `?${queryString}`;
-        }
-      }
-
-      // Default headers
-      const headers = new Headers(customInit.headers || {});
-      if (!headers.has('Content-Type') && body && !(body instanceof FormData)) {
-        headers.set('Content-Type', 'application/json');
-      }
-      if (!headers.has('Accept')) {
-        headers.set('Accept', 'application/json');
-      }
-
-      let requestConfig: RequestConfig & { url: string; method: string } = {
-        ...customInit,
-        url,
-        method,
-        headers,
-        body: body
-          ? body instanceof FormData
-            ? body
-            : JSON.stringify(body)
-          : undefined,
-      } as RequestConfig & { url: string; method: string };
+      let requestConfig = this.buildRequestConfig(endpoint, method, config);
 
       // Apply request interceptors
       requestConfig = await this.applyRequestInterceptors(requestConfig);
+
+      const shouldCache = method === 'GET' && cacheResponse;
+      const cacheKey = shouldCache ? this.getCacheKey(requestConfig) : null;
+      if (cacheKey) {
+        const cached = this.getCachedResponse<T>(cacheKey);
+        if (cached !== undefined) return cached;
+      }
+
+      this.enforceRateLimit(
+        requestConfig,
+        endpoint,
+        !skipRateLimitNotification
+      );
 
       let attempt = 0;
       while (attempt <= retries) {
@@ -188,12 +381,31 @@ class ApiClient {
           // Apply response interceptors
           response = await this.applyResponseInterceptors(response);
 
+          if (response.status === 429) {
+            const rateLimitError = this.createServerRateLimitError(
+              response,
+              endpoint
+            );
+            if (!skipRateLimitNotification) {
+              notifyRateLimit(rateLimitError);
+            }
+            throw rateLimitError;
+          }
+
           if (!response.ok) {
             let errorData;
             try {
               errorData = await response.json();
             } catch {
               errorData = await response.text();
+            }
+            if (response.status >= 500 && response.status < 600) {
+              if (typeof window !== 'undefined') {
+                toast('Something went wrong. Please try again.', 'error');
+              }
+            }
+            if (response.status === 401) {
+              throw new UnauthorizedError(response.statusText, errorData);
             }
             throw new ApiError(response.status, response.statusText, errorData);
           }
@@ -203,9 +415,18 @@ class ApiClient {
             return {} as T;
           }
 
-          return await response.json();
+          const data = (await response.json()) as T;
+          if (cacheKey) {
+            this.setCachedResponse(cacheKey, data, cacheTtlMs);
+          }
+
+          return data;
         } catch (error) {
           clearTimeout(timeoutId);
+
+          if (isRateLimitError(error)) {
+            throw error;
+          }
 
           let finalError = error as Error | ApiError;
           if (
@@ -214,15 +435,16 @@ class ApiClient {
             'name' in error &&
             error.name === 'AbortError'
           ) {
-            finalError = new Error(`Request timed out after ${timeout}ms`);
+            finalError = new Error(
+              `Request timed out. Please check your connection.`
+            );
           }
 
           // Don't retry on client errors (4xx) except 429 Too Many Requests
           if (
             finalError instanceof ApiError &&
             finalError.status >= 400 &&
-            finalError.status < 500 &&
-            finalError.status !== 429
+            finalError.status < 500
           ) {
             throw finalError;
           }
@@ -234,7 +456,7 @@ class ApiClient {
 
           // Wait before retrying
           await new Promise((resolve) =>
-            setTimeout(resolve, retryDelay * attempt)
+            setTimeout(resolve, this.getBackoffMs(retryDelay, attempt))
           );
         }
       }
@@ -264,26 +486,119 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient();
+export {
+  RateLimitError,
+  getRateLimitRemainingMs,
+  isRateLimitError,
+} from './rate-limit';
 
-// Add default auth interceptor for wallet signature
-apiClient.addRequestInterceptor((config) => {
-  if (config.requireAuth !== false) {
-    // In a real app, you would get the wallet signature from your auth state/store
-    const signature =
-      typeof window !== 'undefined'
-        ? localStorage.getItem('wallet_signature')
-        : null;
-    const pubKey =
-      typeof window !== 'undefined'
-        ? localStorage.getItem('wallet_pubkey')
-        : null;
+export interface ApiDonation {
+  id: string;
+  type: 'donation' | 'pool_creation' | 'withdrawal';
+  amount: string;
+  asset: string;
+  recipient: string;
+  date: string;
+  status: 'completed' | 'pending' | 'failed';
+  txHash: string;
+}
 
-    if (signature && pubKey) {
-      const headers = new Headers(config.headers);
-      headers.set('X-Wallet-Signature', signature);
-      headers.set('X-Wallet-Pubkey', pubKey);
-      config.headers = headers;
+export interface ApiProfile {
+  publicKey: string;
+  displayName: string | null;
+  createdAt: string;
+}
+
+export function fetchMyDonations(limit?: number): Promise<ApiDonation[]> {
+  return apiClient.get<ApiDonation[]>(
+    '/users/me/donations',
+    limit ? { params: { limit } } : undefined
+  );
+}
+
+export function fetchMyProfile(): Promise<ApiProfile> {
+  return apiClient.get<ApiProfile>('/users/me');
+}
+
+export function updateProfile(displayName: string): Promise<ApiProfile> {
+  return apiClient.request<ApiProfile>('/users/me', 'PATCH', {
+    body: { displayName },
+    requireAuth: true,
+  });
+}
+
+export interface CreatePoolPayload {
+  title: string;
+  description: string;
+  category: string;
+  goalAmount: string;
+  duration: number;
+  imageUrl: string;
+  tags: string;
+}
+
+export interface CreatePoolResponse {
+  id: string;
+  unsignedXdr: string;
+}
+
+export async function createPool(
+  payload: CreatePoolPayload
+): Promise<CreatePoolResponse> {
+  return apiClient.post<CreatePoolResponse>('/pools', payload);
+}
+
+export async function submitSignedXdr(
+  xdr: string
+): Promise<{ txHash: string }> {
+  return apiClient.post<{ txHash: string }>('/transactions/submit', { xdr });
+}
+
+export async function closePool(
+  poolId: string | number
+): Promise<{ unsignedXdr: string }> {
+  return apiClient.post<{ unsignedXdr: string }>(
+    `/pools/${poolId}/close`,
+    undefined,
+    {
+      requireAuth: true,
     }
-  }
-  return config;
-});
+  );
+}
+
+export async function withdrawPool(
+  poolId: string | number
+): Promise<{ unsignedXdr: string }> {
+  return apiClient.post<{ unsignedXdr: string }>(
+    `/pools/${poolId}/withdraw`,
+    undefined,
+    {
+      requireAuth: true,
+    }
+  );
+}
+
+export function verifyAuthSignature(
+  publicKey: string,
+  nonce: string,
+  signature: string
+): Promise<{ accessToken: string }> {
+  return apiClient.post<{ accessToken: string }>('/auth/verify', {
+    publicKey,
+    signature,
+    message: nonce,
+  });
+}
+
+export interface AuthChallenge {
+  nonce: string;
+  expiresAt: number;
+}
+
+export function fetchAuthChallenge(publicKey: string): Promise<AuthChallenge> {
+  return apiClient.get<AuthChallenge>('/auth/challenge', {
+    params: { publicKey },
+    requireAuth: false,
+    cacheResponse: false,
+  });
+}

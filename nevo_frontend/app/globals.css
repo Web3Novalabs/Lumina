@@ -33,6 +33,8 @@
   --color-border: #e5e7eb;
   --color-text: #111827;
   --color-text-muted: #6b7280;
+  --color-text-secondary: #6b7280;
+  --color-background: #ffffff;
 
   /* Typography scale */
   --font-size-xs: 0.75rem; /* 12px */
@@ -66,6 +68,78 @@
   --color-border: #1f2937;
   --color-text: #f9fafb;
   --color-text-muted: #9ca3af;
+  --color-text-secondary: #9ca3af;
+  --color-background: #0a0a0a;
+}
+
+/* ─── Cross-browser fixes ────────────────────────────────────────────────── */
+
+/* Normalize box-sizing across all browsers */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Safari: prevent tap highlight on interactive elements */
+a,
+button,
+[role='button'] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Firefox: remove inner border on focused buttons */
+button::-moz-focus-inner {
+  border: 0;
+  padding: 0;
+}
+
+/* Safari/iOS: prevent font size inflation on orientation change */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Safari: smooth scrolling with momentum on iOS */
+.overflow-y-auto,
+.overflow-y-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Firefox: hide scrollbar arrows, normalize scrollbar width */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+/* Webkit: style scrollbars to match Firefox */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 3px;
+}
+
+/* Safari: ensure backdrop-filter works */
+.backdrop-blur,
+[class*='backdrop-blur'] {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* Firefox: gap support fallback for older versions */
+@supports not (gap: 1rem) {
+  .flex {
+    margin: -0.5rem;
+  }
+  .flex > * {
+    margin: 0.5rem;
+  }
 }
 
 /* ─── Base styles ────────────────────────────────────────────────────────── */
@@ -76,4 +150,5 @@ body {
   font-size: var(--font-size-base);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

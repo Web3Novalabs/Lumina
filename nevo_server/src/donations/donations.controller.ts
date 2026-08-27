@@ -1,0 +1,37 @@
+import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { DonationSortBy, DonationsService } from './donations.service.js';
+import { GetDonationsDto } from './dto/get-donations.dto.js';
+
+@Controller()
+export class DonationsController {
+  constructor(private readonly donationsService: DonationsService) {}
+
+  @Get('pools/:id/donations')
+  findByPool(@Param('id') id: string, @Query() query: GetDonationsDto) {
+    const sort =
+      query.sortBy === DonationSortBy.largest
+        ? DonationSortBy.largest
+        : DonationSortBy.newest;
+    return this.donationsService.findByPool(id, sort, query.page, query.limit);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('users/me/donations')
+  findMyDonations(
+    @Req() req: Request & { user: { publicKey: string } },
+    @Query() query: GetDonationsDto,
+  ) {
+    const sort =
+      query.sortBy === DonationSortBy.largest
+        ? DonationSortBy.largest
+        : DonationSortBy.newest;
+    return this.donationsService.findByDonor(
+      req.user.publicKey,
+      sort,
+      query.page,
+      query.limit,
+    );
+  }
+}

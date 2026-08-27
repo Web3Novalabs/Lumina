@@ -1,144 +1,11 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-
-// TODO: Replace with real API data once backend transaction endpoints are implemented
-export type TxType = 'donation' | 'pool_creation' | 'withdrawal';
-export type TxStatus = 'completed' | 'pending' | 'failed';
-
-export interface Transaction {
-  id: string;
-  type: TxType;
-  amount: string;
-  asset: string;
-  recipient: string;
-  date: string;
-  status: TxStatus;
-  txHash: string;
-}
-
-const MOCK_TRANSACTIONS: Transaction[] = [
-  {
-    id: '1',
-    type: 'donation',
-    amount: '250',
-    asset: 'XLM',
-    recipient: 'Clean Water Initiative',
-    date: '2025-05-20T14:32:00Z',
-    status: 'completed',
-    txHash: 'abc123def456',
-  },
-  {
-    id: '2',
-    type: 'pool_creation',
-    amount: '0',
-    asset: 'XLM',
-    recipient: 'Open Source Dev Fund',
-    date: '2025-05-18T09:15:00Z',
-    status: 'completed',
-    txHash: 'bcd234efg567',
-  },
-  {
-    id: '3',
-    type: 'withdrawal',
-    amount: '3200',
-    asset: 'XLM',
-    recipient: 'Community Garden Project',
-    date: '2025-05-15T17:45:00Z',
-    status: 'completed',
-    txHash: 'cde345fgh678',
-  },
-  {
-    id: '4',
-    type: 'donation',
-    amount: '100',
-    asset: 'USDC',
-    recipient: 'Education for All',
-    date: '2025-05-12T11:20:00Z',
-    status: 'pending',
-    txHash: 'def456ghi789',
-  },
-  {
-    id: '5',
-    type: 'donation',
-    amount: '500',
-    asset: 'XLM',
-    recipient: 'Medical Relief Fund',
-    date: '2025-05-10T08:05:00Z',
-    status: 'failed',
-    txHash: 'efg567hij890',
-  },
-  {
-    id: '6',
-    type: 'pool_creation',
-    amount: '0',
-    asset: 'XLM',
-    recipient: 'Tech Scholarship Pool',
-    date: '2025-05-08T13:30:00Z',
-    status: 'completed',
-    txHash: 'fgh678ijk901',
-  },
-  {
-    id: '7',
-    type: 'donation',
-    amount: '75',
-    asset: 'XLM',
-    recipient: 'Clean Water Initiative',
-    date: '2025-05-05T16:00:00Z',
-    status: 'completed',
-    txHash: 'ghi789jkl012',
-  },
-  {
-    id: '8',
-    type: 'withdrawal',
-    amount: '1500',
-    asset: 'XLM',
-    recipient: 'Open Source Dev Fund',
-    date: '2025-04-28T10:10:00Z',
-    status: 'completed',
-    txHash: 'hij890klm123',
-  },
-  {
-    id: '9',
-    type: 'donation',
-    amount: '200',
-    asset: 'USDC',
-    recipient: 'Education for All',
-    date: '2025-04-20T14:00:00Z',
-    status: 'completed',
-    txHash: 'ijk901lmn234',
-  },
-  {
-    id: '10',
-    type: 'donation',
-    amount: '50',
-    asset: 'XLM',
-    recipient: 'Medical Relief Fund',
-    date: '2025-04-15T09:45:00Z',
-    status: 'failed',
-    txHash: 'jkl012mno345',
-  },
-  {
-    id: '11',
-    type: 'pool_creation',
-    amount: '0',
-    asset: 'XLM',
-    recipient: 'Climate Action Fund',
-    date: '2025-04-10T11:00:00Z',
-    status: 'completed',
-    txHash: 'klm123nop456',
-  },
-  {
-    id: '12',
-    type: 'donation',
-    amount: '300',
-    asset: 'XLM',
-    recipient: 'Tech Scholarship Pool',
-    date: '2025-04-05T15:30:00Z',
-    status: 'completed',
-    txHash: 'lmn234opq567',
-  },
-];
+import React, { useEffect, useMemo, useState } from 'react';
+import { BackToTopButton } from '@/components';
+import { EmptyState } from '@/components/EmptyState';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { apiClient } from '@/lib/api-client';
+import type { Transaction, TxType, TxStatus } from '@/src/lib/mockTransactions';
 
 const PAGE_SIZE = 8;
 
@@ -251,26 +118,6 @@ function SearchIcon() {
   );
 }
 
-function EmptyIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-      className="size-8"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25ZM6.75 12h.008v.008H6.75V12Zm0 3h.008v.008H6.75V15Zm0 3h.008v.008H6.75V18Z"
-      />
-    </svg>
-  );
-}
-
 const TYPE_ICON: Record<TxType, React.ReactNode> = {
   donation: <DonationIcon />,
   pool_creation: <PoolIcon />,
@@ -285,7 +132,9 @@ const TYPE_ICON_BG: Record<TxType, string> = {
 
 /* ── Main Page ──────────────────────────────────────────────────────────── */
 
-export default function TransactionsPage() {
+function TransactionsPageContent() {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loadingTx, setLoadingTx] = useState(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TxType | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<TxStatus | 'all'>('all');
@@ -293,8 +142,16 @@ export default function TransactionsPage() {
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
 
+  useEffect(() => {
+    apiClient
+      .get<Transaction[]>('/transactions')
+      .then((data) => setTransactions(data ?? []))
+      .catch(() => setTransactions([]))
+      .finally(() => setLoadingTx(false));
+  }, []);
+
   const filtered = useMemo(() => {
-    return MOCK_TRANSACTIONS.filter((tx) => {
+    return transactions.filter((tx) => {
       if (typeFilter !== 'all' && tx.type !== typeFilter) return false;
       if (statusFilter !== 'all' && tx.status !== statusFilter) return false;
       if (
@@ -307,7 +164,7 @@ export default function TransactionsPage() {
       if (dateTo && tx.date > dateTo + 'T23:59:59Z') return false;
       return true;
     });
-  }, [search, typeFilter, statusFilter, dateFrom, dateTo]);
+  }, [transactions, search, typeFilter, statusFilter, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -438,8 +295,44 @@ export default function TransactionsPage() {
       </p>
 
       {/* Transaction list */}
-      {paginated.length === 0 ? (
-        <EmptyState hasFilters={!!hasActiveFilters} onClear={resetFilters} />
+      {loadingTx ? (
+        <TransactionsSkeleton />
+      ) : paginated.length === 0 ? (
+        <EmptyState
+          icon="transaction"
+          iconTone="muted"
+          title={
+            hasActiveFilters
+              ? 'No matching transactions'
+              : 'No transactions yet'
+          }
+          description={
+            hasActiveFilters
+              ? 'Try adjusting your filters or search term.'
+              : 'Your donations, pool creations, and withdrawals will appear here.'
+          }
+          action={
+            hasActiveFilters
+              ? {
+                  label: 'Clear filters',
+                  onClick: resetFilters,
+                  variant: 'secondary',
+                }
+              : {
+                  label: 'Browse Pools',
+                  href: '/pools',
+                }
+          }
+          steps={
+            hasActiveFilters
+              ? undefined
+              : [
+                  { text: 'Donate to a pool on the Browse Pools page' },
+                  { text: 'Create your own pool from the dashboard' },
+                  { text: 'Track every on-chain transaction here' },
+                ]
+          }
+        />
       ) : (
         <>
           <ul
@@ -496,9 +389,54 @@ export default function TransactionsPage() {
   );
 }
 
+/* ── TransactionsSkeleton ───────────────────────────────────────────────── */
+
+function TransactionsSkeleton() {
+  return (
+    <ul
+      className="flex flex-col gap-3"
+      aria-label="Loading transactions"
+      aria-busy="true"
+    >
+      {[1, 2, 3, 4, 5].map((i) => (
+        <li
+          key={i}
+          className="h-20 animate-pulse rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-raised)]"
+        />
+      ))}
+    </ul>
+  );
+}
+
 /* ── TransactionRow ─────────────────────────────────────────────────────── */
 
+import { CopyButton } from '@/components/CopyButton';
+
+const STELLAR_EXPERT_BASE = 'https://stellar.expert/explorer/testnet/tx';
+
+function ExternalLinkIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      className="size-3"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+      />
+    </svg>
+  );
+}
+
 function TransactionRow({ tx }: { tx: Transaction }) {
+  const explorerUrl = `${STELLAR_EXPERT_BASE}/${tx.txHash}`;
+
   return (
     <li className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-shadow hover:shadow-sm">
       <div className="flex items-start gap-4">
@@ -534,8 +472,25 @@ function TransactionRow({ tx }: { tx: Transaction }) {
             <time dateTime={tx.date}>
               {formatDate(tx.date)} · {formatTime(tx.date)}
             </time>
-            <span className="font-mono truncate max-w-32" title={tx.txHash}>
-              {tx.txHash.slice(0, 8)}…
+            <span className="inline-flex items-center gap-1.5">
+              <span className="font-mono truncate max-w-32" title={tx.txHash}>
+                {tx.txHash.slice(0, 8)}…
+              </span>
+              <CopyButton
+                text={tx.txHash}
+                iconOnly
+                aria-label={`Copy transaction hash ${tx.txHash}`}
+              />
+              <a
+                href={explorerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-0.5 text-brand-600 hover:text-brand-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-600 rounded"
+                aria-label={`View transaction ${tx.txHash.slice(0, 8)} on Stellar Expert blockchain explorer (opens in new tab)`}
+              >
+                Explorer
+                <ExternalLinkIcon />
+              </a>
             </span>
           </div>
         </div>
@@ -557,36 +512,13 @@ function StatusBadge({ status }: { status: TxStatus }) {
   );
 }
 
-/* ── EmptyState ─────────────────────────────────────────────────────────── */
-
-function EmptyState({
-  hasFilters,
-  onClear,
-}: {
-  hasFilters: boolean;
-  onClear: () => void;
-}) {
+export default function TransactionsPage() {
   return (
-    <div className="flex flex-col items-center gap-4 py-20 text-center">
-      <div className="flex size-14 items-center justify-center rounded-full bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]">
-        <EmptyIcon />
-      </div>
-      <p className="font-semibold">
-        {hasFilters ? 'No matching transactions' : 'No transactions yet'}
-      </p>
-      <p className="text-sm text-[var(--color-text-muted)] max-w-xs">
-        {hasFilters
-          ? 'Try adjusting your filters or search term.'
-          : 'Your donations, pool creations, and withdrawals will appear here.'}
-      </p>
-      {hasFilters && (
-        <button
-          onClick={onClear}
-          className="rounded-full border border-[var(--color-border)] px-5 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors"
-        >
-          Clear filters
-        </button>
-      )}
-    </div>
+    <>
+      <ProtectedRoute>
+        <TransactionsPageContent />
+      </ProtectedRoute>
+      <BackToTopButton />
+    </>
   );
 }

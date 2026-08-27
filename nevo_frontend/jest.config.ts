@@ -9,7 +9,20 @@ const config: Config = {
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }],
   },
-  testMatch: ['**/__tests__/**/*.test.{ts,tsx}'],
+  testMatch: [
+    '**/__tests__/**/*.test.{ts,tsx}',
+    '**/hooks/**/*.test.{ts,tsx}',
+    '**/src/store/**/*.test.{ts,tsx}',
+  ],
+  collectCoverage: true,
+  coverageThreshold: {
+    global: {
+      branches: 0,
+      functions: 0,
+      lines: 0,
+      statements: 0,
+    },
+  },
 };
 
 export default config;

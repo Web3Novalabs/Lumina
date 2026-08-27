@@ -1,5 +1,7 @@
 # Nevo
 
+[![CI](https://github.com/Web3Novalabs/Nevo/actions/workflows/ci.yml/badge.svg)](https://github.com/Web3Novalabs/Nevo/actions/workflows/ci.yml)
+
 **Nevo** is an open-source donation platform built on Stellar, designed to make fundraising transparent, secure, and efficient through blockchain technology.
 
 ## Overview
@@ -95,6 +97,7 @@ Nevo aims to redefine how donations are managed by making them:
 ## Documentation
 
 - [Pools page details](./docs/pools-page.md) — browse pools, search, filter categories, and review campaign progress.
+- [Backend server (nevo_server)](./nevo_server/README.md) — env vars (see `.env.example`), local PostgreSQL setup, and `migration:generate`/`migration:run`/`migration:revert` scripts.
 
 ---
 

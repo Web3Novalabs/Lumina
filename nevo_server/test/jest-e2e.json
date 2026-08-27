@@ -4,6 +4,20 @@
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      {
+        "useESM": true
+      }
+    ]
+  },
+  "extensionsToTreatAsEsm": [
+    ".ts"
+  ],
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(@stellar/stellar-sdk|@noble/.*|uint8array-extras)/)"
+  ],
+  "moduleNameMapper": {
+    "^(\\.\\.?/.*)\\.js$": "$1"
   }
 }

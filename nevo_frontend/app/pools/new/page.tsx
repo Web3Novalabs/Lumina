@@ -1,9 +1,21 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { createPool, submitSignedXdr, ApiError } from '@/lib/api-client';
+import { signTransaction } from '@stellar/freighter-api';
+import { contractService } from '@/lib/contract-service';
+import { useWalletStore } from '@/src/store/walletStore';
+import { parseApiError } from '@/lib/errors';
 
-// TODO: Replace with real pool creation API call once backend is implemented
+import {
+  validateFormData,
+  validateImageFile,
+} from '@/lib/pool-creation-validation';
+import type { FormData, FormErrors } from '@/lib/pool-creation-validation';
+
 const CATEGORIES = [
   'Humanitarian',
   'Technology',
@@ -23,22 +35,79 @@ const DURATION_OPTIONS = [
   { label: '90 days', value: 90 },
 ];
 
-interface FormData {
-  title: string;
-  description: string;
-  category: string;
-  goalAmount: string;
-  duration: number;
-  imageUrl: string;
-  tags: string;
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = document.createElement('img');
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Unable to load image.'));
+    };
+    image.src = url;
+  });
 }
 
-interface FormErrors {
-  title?: string;
-  description?: string;
-  category?: string;
-  goalAmount?: string;
-  duration?: string;
+function drawCropPreview(image: HTMLImageElement, zoom: number): string {
+  const aspectRatio = 16 / 9;
+  let cropWidth = image.naturalWidth / zoom;
+  let cropHeight = cropWidth / aspectRatio;
+
+  if (cropHeight > image.naturalHeight) {
+    cropHeight = image.naturalHeight;
+    cropWidth = cropHeight * aspectRatio;
+  }
+
+  const cropX = Math.max(0, (image.naturalWidth - cropWidth) / 2);
+  const cropY = Math.max(0, (image.naturalHeight - cropHeight) / 2);
+  const targetWidth = 1280;
+  const targetHeight = Math.round(targetWidth / aspectRatio);
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d');
+
+  if (!ctx) {
+    throw new Error('Canvas context not available.');
+  }
+
+  ctx.clearRect(0, 0, targetWidth, targetHeight);
+  ctx.drawImage(
+    image,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    targetWidth,
+    targetHeight
+  );
+
+  return canvas.toDataURL('image/webp', 0.85);
+}
+
+async function generateCropPreview(file: File, zoom: number): Promise<string> {
+  const image = await loadImage(file);
+  return drawCropPreview(image, zoom);
+}
+
+async function optimizeImage(
+  file: File,
+  zoom: number,
+  onProgress?: (value: number) => void
+): Promise<string> {
+  if (onProgress) onProgress(10);
+  const image = await loadImage(file);
+  if (onProgress) onProgress(35);
+  const dataUrl = drawCropPreview(image, zoom);
+  if (onProgress) onProgress(75);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  if (onProgress) onProgress(100);
+  return dataUrl;
 }
 
 const INITIAL_FORM: FormData = {
@@ -53,13 +122,60 @@ const INITIAL_FORM: FormData = {
 
 type Step = 1 | 2 | 3;
 
-export default function CreatePoolPage() {
+function CreatePoolPageContent() {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<FormErrors>({});
+  const [submitErrorDismissed, setSubmitErrorDismissed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitStep, setSubmitStep] = useState<
+    'idle' | 'creating' | 'signing' | 'submitting'
+  >('idle');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState('');
+  const [cropPreviewUrl, setCropPreviewUrl] = useState('');
+  const [cropZoom, setCropZoom] = useState(1);
+  const [imageProgress, setImageProgress] = useState(0);
+  const [imageUploadError, setImageUploadError] = useState<
+    string | undefined
+  >();
+  const [imageOptimizing, setImageOptimizing] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!imageFile) setCropPreviewUrl('');
+  }, [imageFile]);
+
+  useEffect(() => {
+    if (!imageFile) return undefined;
+
+    let cancelled = false;
+
+    generateCropPreview(imageFile, cropZoom)
+      .then((preview) => {
+        if (!cancelled) {
+          setCropPreviewUrl(preview);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCropPreviewUrl('');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageFile, cropZoom]);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(imagePreviewUrl);
+      }
+    };
+  }, [imagePreviewUrl]);
 
   function update(field: keyof FormData, value: string | number) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -68,28 +184,77 @@ export default function CreatePoolPage() {
     }
   }
 
+  function handleFileSelection(fileList: FileList | null) {
+    const file = fileList?.[0];
+    if (!file) return;
+
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      setImageUploadError(validationError);
+      setImageFile(null);
+      setCropPreviewUrl('');
+      return;
+    }
+
+    setImageUploadError(undefined);
+    setImageFile(file);
+    setCropZoom(1);
+    setImageProgress(0);
+    setImagePreviewUrl(URL.createObjectURL(file));
+  }
+
+  function clearImageSelection() {
+    setImageFile(null);
+    setCropPreviewUrl('');
+    setImageProgress(0);
+    setImageUploadError(undefined);
+    setCropZoom(1);
+    setImagePreviewUrl('');
+  }
+
+  async function applyCropAndOptimize() {
+    if (!imageFile) return;
+    setImageUploadError(undefined);
+    setImageOptimizing(true);
+
+    try {
+      const dataUrl = await optimizeImage(
+        imageFile,
+        cropZoom,
+        setImageProgress
+      );
+      update('imageUrl', dataUrl);
+      setImagePreviewUrl(dataUrl);
+      setImageFile(null);
+      setCropPreviewUrl('');
+      setCropZoom(1);
+    } catch {
+      setImageUploadError(
+        'Could not process the image. Please try a different file.'
+      );
+    } finally {
+      setImageOptimizing(false);
+      setImageProgress(0);
+    }
+  }
+
   function validateStep1(): boolean {
-    const errs: FormErrors = {};
-    if (!form.title.trim()) errs.title = 'Title is required.';
-    else if (form.title.trim().length < 5)
-      errs.title = 'Title must be at least 5 characters.';
-    if (!form.description.trim()) errs.description = 'Description is required.';
-    else if (form.description.trim().length < 20)
-      errs.description = 'Description must be at least 20 characters.';
-    if (!form.category) errs.category = 'Please select a category.';
-    setErrors(errs);
-    return Object.keys(errs).length === 0;
+    const all = validateFormData(form);
+    const stepErr: FormErrors = {};
+    if (all.title) stepErr.title = all.title;
+    if (all.description) stepErr.description = all.description;
+    if (all.category) stepErr.category = all.category;
+    setErrors(stepErr);
+    return Object.keys(stepErr).length === 0;
   }
 
   function validateStep2(): boolean {
-    const errs: FormErrors = {};
-    const goal = parseFloat(form.goalAmount);
-    if (!form.goalAmount) errs.goalAmount = 'Goal amount is required.';
-    else if (isNaN(goal) || goal <= 0)
-      errs.goalAmount = 'Enter a valid amount greater than 0.';
-    if (!form.duration) errs.duration = 'Please select a duration.';
-    setErrors(errs);
-    return Object.keys(errs).length === 0;
+    const all = validateFormData(form);
+    const stepErr: FormErrors = {};
+    if (all.goalAmount) stepErr.goalAmount = all.goalAmount;
+    if (all.duration) stepErr.duration = all.duration;
+    setErrors(stepErr);
+    return Object.keys(stepErr).length === 0;
   }
 
   function handleNext() {
@@ -103,16 +268,102 @@ export default function CreatePoolPage() {
     else if (step === 3) setStep(2);
   }
 
-  async function handleSubmit() {
-    setSubmitting(true);
-    // TODO: Replace with real pool creation call once backend is implemented
-    await new Promise((r) => setTimeout(r, 1000));
-    setSubmitting(false);
-    setSubmitted(true);
+  function validateAllRequiredFields(): boolean {
+    const errs = validateFormData(form);
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
   }
 
-  if (submitted) {
-    return <SuccessScreen onGoToDashboard={() => router.push('/dashboard')} />;
+  async function handleSubmit() {
+    if (!validateAllRequiredFields()) return;
+
+    setSubmitting(true);
+    setSubmitStep('creating');
+    setErrors({});
+    setSubmitErrorDismissed(false);
+    try {
+      if (imageFile && !form.imageUrl) {
+        await applyCropAndOptimize();
+      }
+      const { publicKey } = useWalletStore.getState();
+      if (!publicKey) {
+        throw new Error(
+          'Wallet not connected. Please connect your wallet first.'
+        );
+      }
+
+      // First call createPool API to get poolId and unsignedXdr (handle validation errors here)
+      let createPoolResult;
+      try {
+        createPoolResult = await createPool({
+          title: form.title,
+          description: form.description,
+          category: form.category,
+          goalAmount: form.goalAmount,
+          duration: form.duration,
+          imageUrl: form.imageUrl,
+          tags: form.tags,
+        });
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 400) {
+          // Handle validation errors
+          const errorData = err.data as Record<string, string[]>;
+          const validationErrors: FormErrors = {};
+
+          // Map API error fields to form fields
+          Object.entries(errorData).forEach(([key, messages]) => {
+            const fieldKey = key as keyof FormErrors;
+            validationErrors[fieldKey] = messages[0];
+          });
+
+          setErrors(validationErrors);
+          // If it's a validation error, go back to the appropriate step
+          if (
+            validationErrors.title ||
+            validationErrors.description ||
+            validationErrors.category
+          ) {
+            setStep(1);
+          } else if (validationErrors.goalAmount || validationErrors.duration) {
+            setStep(2);
+          }
+          setSubmitting(false);
+          setSubmitStep('idle');
+          return;
+        }
+        throw err;
+      }
+
+      // Call Freighter's signTransaction with unsignedXdr
+      setSubmitStep('signing');
+      const signedResult = await signTransaction(createPoolResult.unsignedXdr, {
+        networkPassphrase:
+          process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+          'Test SDF Network ; September 2015',
+      });
+      if (signedResult.error) {
+        // Check if it's a rejection
+        if (
+          signedResult.error.toLowerCase().includes('cancelled') ||
+          signedResult.error.toLowerCase().includes('denied')
+        ) {
+          throw new Error('Transaction cancelled');
+        }
+        throw new Error(signedResult.error);
+      }
+
+      // Submit signed XDR
+      setSubmitStep('submitting');
+      await submitSignedXdr(signedResult.signedTxXdr);
+
+      // Redirect to the newly created pool's page after successful submission
+      router.push(`/pools/${createPoolResult.id}`);
+    } catch (error) {
+      setErrors({ submit: parseApiError(error) });
+    } finally {
+      setSubmitting(false);
+      setSubmitStep('idle');
+    }
   }
 
   const tagList = form.tags
@@ -148,6 +399,16 @@ export default function CreatePoolPage() {
             onChange={update}
             onNext={handleNext}
             onBack={handleBack}
+            imagePreviewUrl={imagePreviewUrl}
+            cropPreviewUrl={cropPreviewUrl}
+            cropZoom={cropZoom}
+            imageProgress={imageProgress}
+            imageUploadError={imageUploadError}
+            imageOptimizing={imageOptimizing}
+            onSelectFile={handleFileSelection}
+            onZoomChange={setCropZoom}
+            onApplyCrop={applyCropAndOptimize}
+            onRemoveImage={clearImageSelection}
           />
         )}
         {step === 3 && (
@@ -155,6 +416,10 @@ export default function CreatePoolPage() {
             form={form}
             tagList={tagList}
             submitting={submitting}
+            submitStep={submitStep}
+            errors={errors}
+            submitErrorDismissed={submitErrorDismissed}
+            onDismissSubmitError={() => setSubmitErrorDismissed(true)}
             onBack={handleBack}
             onSubmit={handleSubmit}
           />
@@ -303,9 +568,35 @@ interface Step2Props {
   onChange: (field: keyof FormData, value: string | number) => void;
   onNext: () => void;
   onBack: () => void;
+  imagePreviewUrl: string;
+  cropPreviewUrl: string;
+  cropZoom: number;
+  imageProgress: number;
+  imageUploadError?: string;
+  imageOptimizing: boolean;
+  onSelectFile: (files: FileList | null) => void;
+  onZoomChange: (value: number) => void;
+  onApplyCrop: () => Promise<void>;
+  onRemoveImage: () => void;
 }
 
-function Step2({ form, errors, onChange, onNext, onBack }: Step2Props) {
+function Step2({
+  form,
+  errors,
+  onChange,
+  onNext,
+  onBack,
+  imagePreviewUrl,
+  cropPreviewUrl,
+  cropZoom,
+  imageProgress,
+  imageUploadError,
+  imageOptimizing,
+  onSelectFile,
+  onZoomChange,
+  onApplyCrop,
+  onRemoveImage,
+}: Step2Props) {
   return (
     <div>
       <h2 className="mb-6 text-lg font-semibold">Goal &amp; Duration</h2>
@@ -318,7 +609,7 @@ function Step2({ form, errors, onChange, onNext, onBack }: Step2Props) {
         >
           <div className="relative">
             <input
-              id="goalAmount"
+              id="goal-amount-(xlm)"
               type="number"
               min="1"
               step="any"
@@ -326,7 +617,7 @@ function Step2({ form, errors, onChange, onNext, onBack }: Step2Props) {
               onChange={(e) => onChange('goalAmount', e.target.value)}
               placeholder="e.g. 5000"
               aria-describedby={
-                errors.goalAmount ? 'goalAmount-error' : undefined
+                errors.goalAmount ? 'goal-amount-(xlm)-error' : undefined
               }
               className={`${inputClass(!!errors.goalAmount)} pr-14`}
             />
@@ -338,6 +629,7 @@ function Step2({ form, errors, onChange, onNext, onBack }: Step2Props) {
 
         <Field label="Duration" required error={errors.duration}>
           <div
+            id="duration"
             role="radiogroup"
             aria-label="Campaign duration"
             className="flex flex-wrap gap-2"
@@ -362,21 +654,128 @@ function Step2({ form, errors, onChange, onNext, onBack }: Step2Props) {
         </Field>
 
         <Field
+          label="Banner Image"
+          hint="Upload a JPG, PNG, or WebP cover photo for your pool. Max size 5MB."
+        >
+          <div className="space-y-3">
+            <label className="block rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text)] transition-colors hover:border-brand-400">
+              <span className="font-medium">Select image</span>
+              <input
+                id="banner-image"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => onSelectFile(e.target.files)}
+                className="sr-only"
+              />
+              <span className="mt-3 inline-flex cursor-pointer items-center rounded-full border border-brand-600 bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-700">
+                Choose file
+              </span>
+            </label>
+
+            {imageUploadError && (
+              <p role="alert" className="text-xs text-[var(--color-error)]">
+                {imageUploadError}
+              </p>
+            )}
+
+            {imagePreviewUrl && (
+              <div className="space-y-3">
+                <div className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+                  <Image
+                    src={imagePreviewUrl}
+                    alt="Selected banner preview"
+                    width={1280}
+                    height={720}
+                    className="h-52 w-full object-cover"
+                    unoptimized
+                  />
+                </div>
+
+                <div className="space-y-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium">Crop preview</p>
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      Tighten or loosen crop
+                    </span>
+                  </div>
+
+                  <input
+                    id="cropZoom"
+                    type="range"
+                    min={1}
+                    max={2.5}
+                    step={0.1}
+                    value={cropZoom}
+                    onChange={(e) => onZoomChange(Number(e.target.value))}
+                    className="w-full"
+                  />
+
+                  {cropPreviewUrl && (
+                    <div className="overflow-hidden rounded-2xl border border-[var(--color-border)]">
+                      <Image
+                        src={cropPreviewUrl}
+                        alt="Crop preview"
+                        width={1280}
+                        height={720}
+                        className="h-40 w-full object-cover"
+                        unoptimized
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={onApplyCrop}
+                      disabled={imageOptimizing}
+                      className={primaryBtn}
+                    >
+                      {imageOptimizing ? 'Processing...' : 'Apply Crop'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onRemoveImage}
+                      disabled={imageOptimizing}
+                      className={secondaryBtn}
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  {imageProgress > 0 && (
+                    <progress
+                      value={imageProgress}
+                      max={100}
+                      className="w-full appearance-none rounded-full bg-[var(--color-border)] h-2"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </Field>
+
+        <Field
           label="Banner Image URL"
-          hint="Optional. Provide a URL for your pool's banner image."
+          error={errors.imageUrl}
+          hint="Optional. Provide a URL for your pool's banner image if you do not want to upload a file."
         >
           <input
-            id="imageUrl"
+            id="banner-image-url"
             type="url"
             value={form.imageUrl}
             onChange={(e) => onChange('imageUrl', e.target.value)}
             placeholder="https://example.com/image.jpg"
-            className={inputClass(false)}
+            aria-describedby={
+              errors.imageUrl ? 'banner-image-url-error' : undefined
+            }
+            className={inputClass(!!errors.imageUrl)}
           />
         </Field>
 
         <Field
           label="Tags"
+          error={errors.tags}
           hint="Optional. Comma-separated tags to help people find your pool."
         >
           <input
@@ -385,7 +784,8 @@ function Step2({ form, errors, onChange, onNext, onBack }: Step2Props) {
             value={form.tags}
             onChange={(e) => onChange('tags', e.target.value)}
             placeholder="e.g. water, africa, community"
-            className={inputClass(false)}
+            aria-describedby={errors.tags ? 'tags-error' : undefined}
+            className={inputClass(!!errors.tags)}
           />
         </Field>
       </div>
@@ -402,17 +802,31 @@ function Step2({ form, errors, onChange, onNext, onBack }: Step2Props) {
   );
 }
 
-/* ── Step 3: Preview ──────────────────────────────────────────────────────── */
+/* ── Step 3: Preview ───────────────────────────────────────────────────────── */
 
 interface Step3Props {
   form: FormData;
   tagList: string[];
   submitting: boolean;
+  submitStep: 'idle' | 'creating' | 'signing' | 'submitting';
+  errors?: FormErrors;
+  submitErrorDismissed: boolean;
+  onDismissSubmitError: () => void;
   onBack: () => void;
   onSubmit: () => void;
 }
 
-function Step3({ form, tagList, submitting, onBack, onSubmit }: Step3Props) {
+function Step3({
+  form,
+  tagList,
+  submitting,
+  submitStep,
+  errors,
+  submitErrorDismissed,
+  onDismissSubmitError,
+  onBack,
+  onSubmit,
+}: Step3Props) {
   const endDate = new Date();
   endDate.setDate(endDate.getDate() + form.duration);
 
@@ -427,14 +841,13 @@ function Step3({ form, tagList, submitting, onBack, onSubmit }: Step3Props) {
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] overflow-hidden">
         {/* Banner */}
         {form.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <Image
             src={form.imageUrl}
             alt="Pool banner"
+            width={1280}
+            height={720}
             className="h-40 w-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = 'none';
-            }}
+            unoptimized
           />
         ) : (
           <div
@@ -497,36 +910,45 @@ function Step3({ form, tagList, submitting, onBack, onSubmit }: Step3Props) {
           {submitting ? (
             <span className="flex items-center gap-2">
               <SpinnerIcon />
-              Creating Pool…
+              {submitStep === 'signing'
+                ? 'Waiting for signature...'
+                : submitStep === 'submitting'
+                  ? 'Submitting...'
+                  : 'Creating...'}
             </span>
           ) : (
             'Create Pool'
           )}
         </button>
       </div>
-    </div>
-  );
-}
-
-/* ── Success screen ───────────────────────────────────────────────────────── */
-
-function SuccessScreen({ onGoToDashboard }: { onGoToDashboard: () => void }) {
-  return (
-    <main className="mx-auto max-w-2xl px-6 py-24 text-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="flex size-16 items-center justify-center rounded-full bg-success-light text-success">
-          <CheckCircleIcon />
+      {errors?.submit && !submitErrorDismissed && (
+        <div className="mt-4 p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-500 text-sm flex items-center justify-between gap-2">
+          <span>{errors.submit}</span>
+          <button
+            type="button"
+            onClick={onDismissSubmitError}
+            className="hover:opacity-80 transition-opacity"
+            aria-label="Dismiss error"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              className="size-4"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
         </div>
-        <h1 className="text-2xl font-bold">Pool Created!</h1>
-        <p className="text-[var(--color-text-muted)] max-w-sm">
-          Your donation pool has been created successfully. Share it with your
-          community to start receiving contributions.
-        </p>
-        <button onClick={onGoToDashboard} className={`mt-4 ${primaryBtn}`}>
-          Go to Dashboard
-        </button>
-      </div>
-    </main>
+      )}
+    </div>
   );
 }
 
@@ -663,5 +1085,13 @@ function SpinnerIcon() {
         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
       />
     </svg>
+  );
+}
+
+export default function CreatePoolPage() {
+  return (
+    <ProtectedRoute>
+      <CreatePoolPageContent />
+    </ProtectedRoute>
   );
 }

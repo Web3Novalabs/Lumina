@@ -2,9 +2,15 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { signTransaction } from '@stellar/freighter-api';
 import { useWalletStore } from '@/src/store/walletStore';
+import { EmptyState } from '@/components/EmptyState';
+import ConnectWallet from '@/components/ConnectWallet';
 import { WalletAddress } from '@/components/WalletAddress';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
+import { signTransaction } from '@stellar/freighter-api';
 
 // TODO: Replace with real API call once backend pool endpoints are implemented
 const MOCK_CREATOR_POOLS: Pool[] = [
@@ -58,12 +64,27 @@ type ActionModal =
   | { type: 'archive'; pool: Pool }
   | null;
 
-export default function DashboardPage() {
+function DashboardPageContent() {
   const { publicKey, loading, initialize } = useWalletStore();
   const [pools, setPools] = useState<Pool[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
+  const [confirming, setConfirming] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const loadPools = useCallback(async () => {
+    if (!publicKey) return;
+    setLoadingPools(true);
+    try {
+      const data = await apiClient.get<Pool[]>(`/pools?creator=${publicKey}`);
+      setPools(data ?? []);
+    } catch {
+      setPools([]);
+    } finally {
+      setLoadingPools(false);
+    }
+  }, [publicKey]);
 
   useEffect(() => {
     initialize();
@@ -73,29 +94,20 @@ export default function DashboardPage() {
     if (!publicKey) return;
     // TODO: Replace with real fetch filtered by creator === publicKey
     const timer = setTimeout(() => {
-      setPools(MOCK_CREATOR_POOLS);
-      setLoadingPools(false);
+      try {
+        setPools(MOCK_CREATOR_POOLS);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load pools';
+        console.error('Failed to load pools:', err);
+        setError(message);
+        toast(message, 'error');
+      } finally {
+        setLoadingPools(false);
+      }
     }, 400);
     return () => clearTimeout(timer);
   }, [publicKey]);
-
-  // ── Wallet not connected ───────────────────────────────────────────────
-  if (!loading && !publicKey) {
-    return (
-      <main className="mx-auto max-w-5xl px-6 py-24 text-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex size-16 items-center justify-center rounded-full bg-brand-100 text-brand-600">
-            <LockIcon />
-          </div>
-          <h1 className="text-2xl font-bold">Connect your wallet</h1>
-          <p className="text-[var(--color-text-muted)] max-w-sm">
-            Your dashboard is only accessible to pool creators. Connect your
-            Stellar wallet to continue.
-          </p>
-        </div>
-      </main>
-    );
-  }
 
   // ── Summary metrics ────────────────────────────────────────────────────
   const totalRaised = pools.reduce((s, p) => s + p.raised, 0);
@@ -190,10 +202,7 @@ export default function DashboardPage() {
           <button
             className="rounded-lg border border-[var(--color-border)] px-3 py-1 hover:bg-[var(--color-border)] transition-colors"
             aria-label="Archive selected pools"
-            onClick={() => {
-              // TODO: bulk archive action
-              setSelectedIds(new Set());
-            }}
+            onClick={archiveSelectedPools}
           >
             Archive selected
           </button>
@@ -203,8 +212,26 @@ export default function DashboardPage() {
       {/* ── Pool list ───────────────────────────────────────────────────── */}
       {loading || loadingPools ? (
         <PoolListSkeleton />
+      ) : error ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        >
+          <p className="font-medium">Failed to load pools</p>
+          <p className="mt-1">{error}</p>
+        </div>
       ) : pools.length === 0 ? (
-        <EmptyState />
+        <EmptyState
+          icon="pool"
+          title="No pools yet"
+          description="Create your first pool to start raising funds on-chain."
+          action={{ label: 'Create a Pool', href: '/pools/new' }}
+          steps={[
+            { text: 'Set a title, goal, and category for your cause' },
+            { text: 'Share your pool link with supporters' },
+            { text: 'Withdraw funds once your goal is reached' },
+          ]}
+        />
       ) : (
         <section aria-label="Your pools">
           {/* Table header — desktop only */}
@@ -243,9 +270,47 @@ export default function DashboardPage() {
         <ConfirmModal
           modal={actionModal}
           onClose={() => setActionModal(null)}
-          onConfirm={() => {
-            // TODO: wire to real withdraw / archive contract calls
-            setActionModal(null);
+          onConfirm={async () => {
+            if (!actionModal) return;
+
+            try {
+              if (actionModal.type === 'withdraw') {
+                const { unsignedXdr } = await withdrawPool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Withdrawal successful');
+              } else {
+                const { unsignedXdr } = await closePool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Pool archived successfully');
+              }
+            } catch (err: unknown) {
+              const error = err as Error;
+              toast(error.message || 'Failed to complete action', 'error');
+              console.error(error);
+            } finally {
+              setActionModal(null);
+              void loadPools();
+            }
           }}
         />
       )}
@@ -394,10 +459,12 @@ function ConfirmModal({
   modal,
   onClose,
   onConfirm,
+  confirming,
 }: {
   modal: NonNullable<ActionModal>;
   onClose: () => void;
   onConfirm: () => void;
+  confirming: boolean;
 }) {
   const isWithdraw = modal.type === 'withdraw';
 
@@ -427,15 +494,21 @@ function ConfirmModal({
         <div className="mt-5 flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+            disabled={confirming}
+            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
+            disabled={confirming}
+            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60 disabled:cursor-not-allowed ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
           >
-            {isWithdraw ? 'Confirm Withdraw' : 'Archive'}
+            {confirming
+              ? 'Processing…'
+              : isWithdraw
+                ? 'Confirm Withdraw'
+                : 'Archive'}
           </button>
         </div>
       </div>
@@ -462,28 +535,6 @@ function PoolListSkeleton() {
   );
 }
 
-/* ── Empty state ──────────────────────────────────────────────────────────── */
-
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center gap-4 py-20 text-center">
-      <div className="flex size-14 items-center justify-center rounded-full bg-brand-100 text-brand-600">
-        <PoolIcon />
-      </div>
-      <p className="font-semibold">No pools yet</p>
-      <p className="text-sm text-[var(--color-text-muted)]">
-        Create your first pool to start raising funds on-chain.
-      </p>
-      <Link
-        href="/pools/new"
-        className="rounded-full bg-brand-600 px-6 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-      >
-        Create a Pool
-      </Link>
-    </div>
-  );
-}
-
 /* ── Icons ────────────────────────────────────────────────────────────────── */
 
 function PlusIcon() {
@@ -506,42 +557,10 @@ function PlusIcon() {
   );
 }
 
-function LockIcon() {
+export default function DashboardPage() {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-      className="size-7"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"
-      />
-    </svg>
-  );
-}
-
-function PoolIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-      className="size-7"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-      />
-    </svg>
+    <ProtectedRoute>
+      <DashboardPageContent />
+    </ProtectedRoute>
   );
 }

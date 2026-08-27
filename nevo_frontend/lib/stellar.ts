@@ -1,17 +1,75 @@
+import {
+  ClientRateLimiter,
+  RateLimitError,
+  notifyRateLimit,
+  parseRetryAfterHeader,
+  resolveRateLimitOptions,
+} from './rate-limit';
+import { signTransaction as freighterSignTransaction } from '@stellar/freighter-api';
+import { Networks } from '@stellar/stellar-sdk';
+
 export interface AccountBalances {
   xlm: string;
   usdc: string;
 }
 
 const HORIZON = 'https://horizon.stellar.org';
+const NETWORK_PASSPHRASE =
+  process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? Networks.TESTNET;
+const ZERO_BALANCES: AccountBalances = { xlm: '0', usdc: '0' };
+const HORIZON_RATE_LIMIT = resolveRateLimitOptions({
+  maxRequests: 60,
+  windowMs: 60_000,
+});
+const horizonRateLimiter = new ClientRateLimiter();
+
+function createHorizonRateLimitError(
+  retryAfterMs: number,
+  endpoint: string
+): RateLimitError {
+  return new RateLimitError(
+    {
+      ...HORIZON_RATE_LIMIT,
+      allowed: false,
+      remaining: 0,
+      resetAt: Date.now() + retryAfterMs,
+      retryAfterMs,
+    },
+    endpoint
+  );
+}
+
+function enforceHorizonRateLimit(endpoint: string): void {
+  const result = horizonRateLimiter.consume(
+    'stellar:horizon',
+    HORIZON_RATE_LIMIT
+  );
+  if (!result.allowed) {
+    const error = new RateLimitError(result, endpoint);
+    notifyRateLimit(error);
+    throw error;
+  }
+}
 
 /** Fetches XLM and USDC balances for a Stellar public key via Horizon. */
 export async function getAccountBalances(
   publicKey: string
 ): Promise<AccountBalances> {
+  const endpoint = `${HORIZON}/accounts/${publicKey}`;
+
   try {
-    const res = await fetch(`${HORIZON}/accounts/${publicKey}`);
-    if (!res.ok) return { xlm: '0', usdc: '0' };
+    enforceHorizonRateLimit(endpoint);
+
+    const res = await fetch(endpoint);
+    if (res.status === 429) {
+      const retryAfterMs =
+        parseRetryAfterHeader(res.headers.get('Retry-After')) ??
+        HORIZON_RATE_LIMIT.windowMs;
+      notifyRateLimit(createHorizonRateLimitError(retryAfterMs, endpoint));
+      return ZERO_BALANCES;
+    }
+
+    if (!res.ok) return ZERO_BALANCES;
     const data = await res.json();
     let xlm = '0';
     let usdc = '0';
@@ -21,6 +79,18 @@ export async function getAccountBalances(
     }
     return { xlm, usdc };
   } catch {
-    return { xlm: '0', usdc: '0' };
+    return ZERO_BALANCES;
   }
+}
+
+export async function signTransaction(xdr: string): Promise<string> {
+  const result = await freighterSignTransaction(xdr, {
+    networkPassphrase: NETWORK_PASSPHRASE,
+  });
+
+  if (result.error) {
+    throw new Error(result.error);
+  }
+
+  return result.signedTxXdr;
 }

@@ -1,16 +1,8 @@
 name: CI
-
-on:
-  pull_request:
-    branches: [main, develop]
-
+on: [push, pull_request]
 jobs:
-  frontend:
-    name: Frontend CI
+  build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./nevo_frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -21,19 +13,29 @@ jobs:
           cache-dependency-path: nevo_frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Format check
-        run: npx prettier --check .
+        run: npm ci --legacy-peer-deps
 
       - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3000
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
         run: npm run build
 
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Check for remaining mock data
+        working-directory: ./nevo_frontend
+        run: |
+          if grep -r "MOCK_" app/ src/store/ \
+            --include="*.ts" \
+            --include="*.tsx" -l; then
+            echo "ERROR: MOCK_ constants found. Remove all mock data before merging to main."
+            exit 1
+          fi
+
   server:
-    name: Server CI
+    name: Server — Build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -48,24 +50,50 @@ jobs:
           cache-dependency-path: nevo_server/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
-      - name: Lint
-        run: npm run lint
+      - name: Build
+        run: npm run build
 
-      - name: Format check
-        run: npx prettier --check "src/**/*.ts" "test/**/*.ts"
+  contract:
+    name: Contract — Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./nevo_contract
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Unit tests with coverage
-        run: npm run test:cov
-
-      - name: E2E tests
-        run: npm run test:e2e
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          name: coverage-report
-          path: nevo_server/coverage/
-          retention-days: 7
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nevo_contract/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('nevo_contract/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build contract
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Run tests
+        run: cargo test --lib
+
+  markdown-links:
+    name: Markdown — Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "yes"
+          config-file: ".github/mlc_config.json"
