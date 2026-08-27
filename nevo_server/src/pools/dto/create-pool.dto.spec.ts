@@ -155,4 +155,27 @@ describe('CreatePoolDto (POST /pools body contract)', () => {
 
     expect(create).not.toHaveBeenCalled();
   });
+
+  it('rejects a non-URL imageUrl with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/pools')
+      .send({ ...validBody, imageUrl: 'not a url' })
+      .expect(400);
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a valid https imageUrl alongside the required fields', async () => {
+    const body = { ...validBody, imageUrl: 'https://example.com/pool.png' };
+    await request(app.getHttpServer()).post('/pools').send(body).expect(201);
+
+    expect(create).toHaveBeenCalledWith(body);
+  });
+
+  it('accepts a null imageUrl (nullable optional field)', async () => {
+    const body = { ...validBody, imageUrl: null };
+    await request(app.getHttpServer()).post('/pools').send(body).expect(201);
+
+    expect(create).toHaveBeenCalledWith(body);
+  });
 });

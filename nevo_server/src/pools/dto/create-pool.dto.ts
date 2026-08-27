@@ -4,6 +4,7 @@ import {
   IsNumberString,
   IsOptional,
   IsString,
+  IsUrl,
   MaxLength,
 } from 'class-validator';
 
@@ -45,5 +46,6 @@ export class CreatePoolDto {
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
+  @IsUrl()
   imageUrl?: string | null;
 }
