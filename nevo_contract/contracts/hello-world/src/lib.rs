@@ -1011,6 +1011,14 @@ impl Contract {
     ///
     /// Only the stored admin may call this function.
     /// A fee of zero is valid (disables the creation fee).
+    /// A negative fee panics with `"InvalidFee"`.
+    ///
+    /// Emits a `creation_fee_updated` event on success.
+    ///
+    /// # Panics
+    /// - `"Admin not set"` if no admin has been configured
+    /// - `"Unauthorized admin"` if `admin` does not match the stored admin
+    /// - `"InvalidFee"` if `fee` is negative
     /// A negative fee panics with `ContractError::InvalidFee`.
     ///
     /// Emits a `FEE_UPDATED` event on success.
@@ -1027,6 +1035,13 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
+            .expect("Admin not set");
+        if stored_admin != admin {
+            panic!("Unauthorized admin");
+        }
+
+        if fee < 0 {
+            panic!("InvalidFee");
             .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
         if stored_admin != admin {
             env.panic_with_error(ContractError::UnauthorizedAdmin);
@@ -1039,6 +1054,11 @@ impl Contract {
         let fee_key = Symbol::new(&env, CREATION_FEE_KEY);
         env.storage().persistent().set(&fee_key, &fee);
 
+        // Emit event: topics = ["creation_fee_updated"], data = new fee value
+        env.events().publish(
+            (Symbol::new(&env, "creation_fee_updated"),),
+            fee,
+        );
         // Issue #954: use shared FEE_UPDATED constant instead of inline Symbol::new
         env.events().publish((FEE_UPDATED,), fee);
     }
@@ -1061,6 +1081,7 @@ impl Contract {
     /// The deadline must be in the future (greater than the current ledger).
     ///
     /// # Panics
+    /// - `"Pool not found"` if pool_id is invalid
     /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `"Error(Auth, InvalidAction)"` if caller is not the pool sponsor
     /// - `"Deadline must be in the future"` if deadline <= current ledger
@@ -1069,6 +1090,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
+            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.sponsor.require_auth();
@@ -1105,6 +1127,17 @@ impl Contract {
     ///      (`current_ledger >= deadline + REFUND_GRACE_PERIOD_LEDGERS`).
     ///
     /// # Panics
+    /// - `"Pool not found"` if pool_id is invalid
+    /// - `"PoolNotExpired"` if the deadline has not passed yet
+    /// - `"PoolNotExpired"` if the pool is exactly at the deadline (no grace)
+    /// - `"PoolNotExpired"` if inside the grace period
+    /// - `"No contribution to refund"` if the donor has no recorded contribution
+    pub fn refund_donation(
+        env: Env,
+        pool_id: u32,
+        donor: Address,
+        token_address: Address,
+    ) {
     /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `ContractError::PoolNotExpired` if the deadline has not passed (or grace not elapsed)
     /// - `ContractError::NoContributionToRefund` if the donor has no recorded contribution
@@ -1115,6 +1148,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
+            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let deadline_key = (Symbol::new(&env, POOL_DEADLINE_PREFIX), pool_id);
@@ -1131,6 +1165,7 @@ impl Contract {
             || current_ledger <= deadline
             || current_ledger < deadline + REFUND_GRACE_PERIOD_LEDGERS
         {
+            panic!("PoolNotExpired");
             env.panic_with_error(ContractError::PoolNotExpired);
         }
 
@@ -1142,6 +1177,7 @@ impl Contract {
             .unwrap_or(0);
 
         if contribution == 0 {
+            panic!("No contribution to refund");
             env.panic_with_error(ContractError::NoContributionToRefund);
         }
 
