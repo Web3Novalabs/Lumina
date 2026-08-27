@@ -214,6 +214,9 @@ pub struct Pool {
     pub is_closed: bool,
     pub state: PoolState,
     pub application_deadline: u64,
+    /// Ledger timestamp of the most recent contribution to this pool.
+    /// Zero until the pool receives its first donation.
+    pub last_donation_at: u64,
 }
 
 /// Milestone for streaming disbursements
@@ -327,6 +330,7 @@ impl Contract {
             is_closed: false,
             state: PoolState::Active,
             application_deadline,
+            last_donation_at: 0u64,
         };
 
         env.storage().persistent().set(&pool_id, &pool);
@@ -411,6 +415,7 @@ impl Contract {
             is_closed: pool.is_closed,
             state: pool.state,
             application_deadline: pool.application_deadline,
+            last_donation_at: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&pool_id, &updated_pool);
 
@@ -508,6 +513,18 @@ impl Contract {
         pool.collected
     }
 
+    /// Get the ledger timestamp of the most recent contribution to a pool.
+    /// Returns 0 if the pool has never received a donation.
+    pub fn get_last_donation_at(env: Env, pool_id: u32) -> u64 {
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get::<_, Pool>(&pool_id)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
+
+        pool.last_donation_at
+    }
+
     /// Close a donation pool.
     pub fn close_pool(env: Env, pool_id: u32) {
         let pool: Pool = env
@@ -529,6 +546,7 @@ impl Contract {
             is_closed: true,
             state: pool.state,
             application_deadline: pool.application_deadline,
+            last_donation_at: pool.last_donation_at,
         };
 
         env.storage().persistent().set(&pool_id, &updated_pool);
@@ -1209,6 +1227,7 @@ impl Contract {
             is_closed: pool.is_closed,
             state: pool.state,
             application_deadline: pool.application_deadline,
+            last_donation_at: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&pool_id, &updated_pool);
 
