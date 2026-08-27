@@ -1127,17 +1127,6 @@ impl Contract {
     ///      (`current_ledger >= deadline + REFUND_GRACE_PERIOD_LEDGERS`).
     ///
     /// # Panics
-    /// - `"Pool not found"` if pool_id is invalid
-    /// - `"PoolNotExpired"` if the deadline has not passed yet
-    /// - `"PoolNotExpired"` if the pool is exactly at the deadline (no grace)
-    /// - `"PoolNotExpired"` if inside the grace period
-    /// - `"No contribution to refund"` if the donor has no recorded contribution
-    pub fn refund_donation(
-        env: Env,
-        pool_id: u32,
-        donor: Address,
-        token_address: Address,
-    ) {
     /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `ContractError::PoolNotExpired` if the deadline has not passed (or grace not elapsed)
     /// - `ContractError::NoContributionToRefund` if the donor has no recorded contribution
@@ -1148,7 +1137,6 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let deadline_key = (Symbol::new(&env, POOL_DEADLINE_PREFIX), pool_id);
@@ -1165,7 +1153,6 @@ impl Contract {
             || current_ledger <= deadline
             || current_ledger < deadline + REFUND_GRACE_PERIOD_LEDGERS
         {
-            panic!("PoolNotExpired");
             env.panic_with_error(ContractError::PoolNotExpired);
         }
 
@@ -1177,7 +1164,6 @@ impl Contract {
             .unwrap_or(0);
 
         if contribution == 0 {
-            panic!("No contribution to refund");
             env.panic_with_error(ContractError::NoContributionToRefund);
         }
 
