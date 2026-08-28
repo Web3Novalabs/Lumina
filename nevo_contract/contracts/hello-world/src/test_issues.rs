@@ -973,3 +973,143 @@ fn test_get_pool_school_fails_for_non_school_pool() {
 
     client.get_pool_school(&pool_id);
 }
+
+// ============= ISSUE #1080: CREATE_POOL PARAMETER VALIDATION TESTS =============
+// Issue #1080 refers to this entry point as `save_pool`; the contract's actual
+// pool-creation function is `create_pool` (there is no `save_pool`).
+
+/// Test 1: An empty pool name (title) fails with InvalidPoolName.
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_create_pool_empty_name_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    client.create_pool(
+        &creator,
+        &String::from_str(&env, ""),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+}
+
+/// Test 2: A zero target amount (goal) fails with InvalidPoolTarget.
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_create_pool_zero_target_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    client.create_pool(
+        &creator,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Test"),
+        &0u128,
+        &100_000u64,
+    );
+}
+
+/// Test 3: A deadline in the past (relative to the current simulated ledger
+/// time) fails with InvalidPoolDeadline.
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn test_create_pool_past_deadline_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    env.ledger().set_timestamp(100_000);
+    let now = env.ledger().timestamp();
+
+    let creator = Address::generate(&env);
+    client.create_pool(
+        &creator,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &(now - 1),
+    );
+}
+
+/// Test 4: Valid parameters succeed, and the created pool is readable
+/// afterward with the expected field values.
+#[test]
+fn test_create_pool_valid_params_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    env.ledger().set_timestamp(100_000);
+    let now = env.ledger().timestamp();
+
+    let creator = Address::generate(&env);
+    let goal = 1_000_000_000u128;
+    let deadline = now + 1_000;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Valid Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &deadline,
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.0, pool_id);
+    assert_eq!(pool.1, creator);
+    assert_eq!(pool.2, goal);
+    assert_eq!(pool.3, 0u128);
+    assert_eq!(pool.4, false);
+    assert_eq!(pool.5, deadline);
+
+    let (title, description) = client.get_pool_metadata(&pool_id);
+    assert_eq!(title, String::from_str(&env, "Valid Pool"));
+    assert_eq!(description, String::from_str(&env, "Test"));
+}
+
+/// Test 5: Pool IDs are assigned sequentially, starting at 1, across
+/// multiple successful `create_pool` calls.
+#[test]
+fn test_create_pool_ids_are_sequential() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+
+    let pool_id_1 = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool One"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    let pool_id_2 = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool Two"),
+        &String::from_str(&env, "Test"),
+        &2_000_000_000u128,
+        &100_000u64,
+    );
+    let pool_id_3 = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool Three"),
+        &String::from_str(&env, "Test"),
+        &3_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(pool_id_1, 1);
+    assert_eq!(pool_id_2, 2);
+    assert_eq!(pool_id_3, 3);
+    assert_eq!(client.get_pool_count(), 3);
+}
