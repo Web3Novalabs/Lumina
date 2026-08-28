@@ -973,3 +973,113 @@ fn test_get_pool_school_fails_for_non_school_pool() {
 
     client.get_pool_school(&pool_id);
 }
+
+// ============= ISSUE #1082: CAMPAIGN CREATION VALIDATION EDGE CASES =============
+//
+// "Campaign" here is `create_pool` (there is no `create_campaign` function).
+//
+// Two of the five cases in the issue are not testable against the actual
+// contract and are intentionally omitted rather than faked:
+//   - "Maximum title length succeeds": no max title length is enforced
+//     anywhere in the contract (only MAX_DESCRIPTION_LENGTH, MAX_URL_LENGTH,
+//     and MAX_IMAGE_HASH_LENGTH exist, none of which bound `title`), so
+//     there is no defined maximum to test against.
+//   - "Duplicate campaign ID fails": pool IDs are purely auto-incrementing
+//     (`pool_count + 1` in `create_pool`) and are never caller-supplied, so
+//     a duplicate ID cannot occur through any normal call path.
+
+/// Test 1: A very large (but not type-bounded) title still succeeds, since
+/// no max title length is enforced. Named accordingly rather than as a
+/// "maximum length" test, since no such maximum exists.
+#[test]
+fn test_create_pool_large_title_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let large_title = String::from_str(&env, &"t".repeat(1000));
+    let pool_id = client.create_pool(
+        &creator,
+        &large_title,
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let (title, _) = client.get_pool_metadata(&pool_id);
+    assert_eq!(title, large_title);
+}
+
+/// Test 2: A large-but-valid goal value (u128::MAX, the true upper bound of
+/// the field's type) succeeds, since no max goal value is enforced.
+#[test]
+fn test_create_pool_large_goal_value_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let goal = u128::MAX;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Large Goal Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &100_000u64,
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.2, goal);
+}
+
+/// Test 3: A deadline set exactly at the current ledger timestamp fails.
+/// `create_pool` rejects with `<=`, so equality to `now` is a failure, not
+/// only strictly-past values (covered separately by #1080's own tests).
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn test_create_pool_deadline_equal_to_current_timestamp_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    env.ledger().set_timestamp(100_000);
+    let now = env.ledger().timestamp();
+
+    let creator = Address::generate(&env);
+    client.create_pool(
+        &creator,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &now,
+    );
+}
+
+/// Test 4: A deadline set in the future succeeds.
+#[test]
+fn test_create_pool_future_deadline_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    env.ledger().set_timestamp(100_000);
+    let now = env.ledger().timestamp();
+    let deadline = now + 1;
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &deadline,
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.5, deadline);
+}
