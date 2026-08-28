@@ -60,7 +60,6 @@ const FEES_CLAIMED: Symbol = symbol_short!("fees_clmd");
 const DONATION_REFUND: Symbol = symbol_short!("don_refnd");
 const DEADLINE_SET: Symbol = symbol_short!("ddln_set");
 const POOL_STATE_SET: Symbol = symbol_short!("pool_stat");
-const SCHOOL_REG: Symbol = symbol_short!("schl_reg");
 const ADMIN_SET: Symbol = symbol_short!("admin_set");
 // Issue #954: shared constant replacing inline Symbol::new(&env, "creation_fee_updated")
 const FEE_UPDATED: Symbol = symbol_short!("fee_upd");
