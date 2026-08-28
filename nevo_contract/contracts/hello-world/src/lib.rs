@@ -223,15 +223,23 @@ pub struct Milestone {
     pub amount: u128,
 }
 
-// TODO: Replace with real implementation from issue #XYZ
-// Emergency withdrawal request structure
+/// Pending emergency withdrawal of tokens from a pool.
+///
+/// Created by `request_emergency_withdraw` and stored until
+/// `execute_emergency_withdraw` runs after the grace period elapses.
+/// Tokens are sent to `requested_by`, not necessarily the caller who executes.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmergencyWithdrawalRequest {
+    /// The pool from which the emergency withdrawal was requested.
     pub pool_id: u32,
+    /// Token contract to transfer when the withdrawal is executed.
     pub token_address: Address,
+    /// Amount of tokens to withdraw, in the token's smallest unit.
     pub amount: i128,
+    /// Ledger timestamp when the request was recorded; used for the grace-period check.
     pub request_timestamp: u64,
+    /// Address that requested the withdrawal and will receive the tokens.
     pub requested_by: Address,
 }
 
@@ -1042,25 +1050,18 @@ impl Contract {
 
         if fee < 0 {
             panic!("InvalidFee");
-            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
-        if stored_admin != admin {
-            env.panic_with_error(ContractError::UnauthorizedAdmin);
-        }
-
-        if fee < 0 {
-            env.panic_with_error(ContractError::InvalidFee);
         }
 
         let fee_key = Symbol::new(&env, CREATION_FEE_KEY);
         env.storage().persistent().set(&fee_key, &fee);
 
+        // Issue #954: use shared FEE_UPDATED constant instead of inline Symbol::new
+        env.events().publish((FEE_UPDATED,), fee);
         // Emit event: topics = ["creation_fee_updated"], data = new fee value
         env.events().publish(
             (Symbol::new(&env, "creation_fee_updated"),),
             fee,
         );
-        // Issue #954: use shared FEE_UPDATED constant instead of inline Symbol::new
-        env.events().publish((FEE_UPDATED,), fee);
     }
 
     /// Get the current pool creation fee.
@@ -1091,7 +1092,6 @@ impl Contract {
             .persistent()
             .get::<_, Pool>(&pool_id)
             .expect("Pool not found");
-            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.sponsor.require_auth();
 
@@ -1127,17 +1127,6 @@ impl Contract {
     ///      (`current_ledger >= deadline + REFUND_GRACE_PERIOD_LEDGERS`).
     ///
     /// # Panics
-    /// - `"Pool not found"` if pool_id is invalid
-    /// - `"PoolNotExpired"` if the deadline has not passed yet
-    /// - `"PoolNotExpired"` if the pool is exactly at the deadline (no grace)
-    /// - `"PoolNotExpired"` if inside the grace period
-    /// - `"No contribution to refund"` if the donor has no recorded contribution
-    pub fn refund_donation(
-        env: Env,
-        pool_id: u32,
-        donor: Address,
-        token_address: Address,
-    ) {
     /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `ContractError::PoolNotExpired` if the deadline has not passed (or grace not elapsed)
     /// - `ContractError::NoContributionToRefund` if the donor has no recorded contribution
@@ -1148,7 +1137,6 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let deadline_key = (Symbol::new(&env, POOL_DEADLINE_PREFIX), pool_id);
@@ -1165,7 +1153,6 @@ impl Contract {
             || current_ledger <= deadline
             || current_ledger < deadline + REFUND_GRACE_PERIOD_LEDGERS
         {
-            panic!("PoolNotExpired");
             env.panic_with_error(ContractError::PoolNotExpired);
         }
 
@@ -1177,7 +1164,6 @@ impl Contract {
             .unwrap_or(0);
 
         if contribution == 0 {
-            panic!("No contribution to refund");
             env.panic_with_error(ContractError::NoContributionToRefund);
         }
 
@@ -1320,8 +1306,15 @@ impl Contract {
         env.storage().persistent().set(&withdrawal_key, &request);
     }
 
-    // TODO: Replace with real implementation from issue #XYZ
-    // Mock emergency withdrawal execution function
+    /// Execute a pending emergency withdrawal after the grace period elapses.
+    ///
+    /// Any caller may invoke this — not only the original requester — once
+    /// `GRACE_PERIOD_SECS` (24 hours) has passed since the request was stored.
+    /// Tokens are transferred to `requested_by` and the stored request is removed.
+    ///
+    /// # Panics
+    /// - `"Emergency withdrawal not requested"` if no request exists for `pool_id`
+    /// - `"Grace period not elapsed"` if fewer than `GRACE_PERIOD_SECS` have passed
     pub fn execute_emergency_withdraw(env: Env, pool_id: u32) {
         let withdrawal_key = (Symbol::new(&env, EMERGENCY_WITHDRAWAL_PREFIX), pool_id);
         let request: EmergencyWithdrawalRequest = env

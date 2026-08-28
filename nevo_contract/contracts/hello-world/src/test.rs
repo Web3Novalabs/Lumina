@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
     token::StellarAssetClient,
-    Address, BytesN, Env, IntoVal, String,
+    Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -736,14 +736,12 @@ fn test_set_creation_fee_emits_event() {
         "Expected at least one event after set_creation_fee"
     );
 
-    // Build the expected event tuple using IntoVal (already imported).
-    // publish((Symbol,), data) stores topics as a Vec<Val> with one entry.
-    let expected = (
-        contract_id.clone(),
-        (Symbol::new(&env, "creation_fee_updated"),).into_val(&env),
-        new_fee.into_val(&env),
-    );
-    assert_eq!(events.last().unwrap(), expected);
+    let last = events.last().unwrap();
+    assert_eq!(last.0, contract_id);
+    let topic = Symbol::try_from_val(&env, &last.1.get(0).unwrap()).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "creation_fee_updated"));
+    let fee = i128::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(fee, new_fee);
 }
 
 // (6) get_creation_fee returns the updated fee after set_creation_fee.
@@ -794,7 +792,7 @@ fn advance_ledger(env: &Env, delta: u32) {
 
 // (1) Refund before deadline fails with "PoolNotExpired".
 #[test]
-#[should_panic(expected = "PoolNotExpired")]
+#[should_panic(expected = "Error(Contract, #12)")]
 fn test_refund_before_deadline_fails_with_pool_not_expired() {
     let env = Env::default();
     env.mock_all_auths();
@@ -809,6 +807,7 @@ fn test_refund_before_deadline_fails_with_pool_not_expired() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing refund deadline"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     // Donate so there is something to refund
@@ -826,7 +825,7 @@ fn test_refund_before_deadline_fails_with_pool_not_expired() {
 
 // (2) Refund exactly at deadline fails (grace period required).
 #[test]
-#[should_panic(expected = "PoolNotExpired")]
+#[should_panic(expected = "Error(Contract, #12)")]
 fn test_refund_exactly_at_deadline_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -841,6 +840,7 @@ fn test_refund_exactly_at_deadline_fails() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing refund at deadline"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     let token_address = create_token(&env, 500_000_000, &donor);
@@ -861,7 +861,7 @@ fn test_refund_exactly_at_deadline_fails() {
 
 // (3) Refund after deadline but before grace period fails with "PoolNotExpired".
 #[test]
-#[should_panic(expected = "PoolNotExpired")]
+#[should_panic(expected = "Error(Contract, #12)")]
 fn test_refund_after_deadline_but_before_grace_period_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -876,6 +876,7 @@ fn test_refund_after_deadline_but_before_grace_period_fails() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing refund in grace period"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     let token_address = create_token(&env, 500_000_000, &donor);
@@ -901,6 +902,9 @@ fn test_refund_after_deadline_but_before_grace_period_fails() {
 fn test_refund_after_grace_period_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
@@ -912,6 +916,7 @@ fn test_refund_after_grace_period_succeeds() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing successful refund"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     // Donate 500_000_000 tokens to the pool via donate_with_token
