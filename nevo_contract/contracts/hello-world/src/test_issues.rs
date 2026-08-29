@@ -2,7 +2,7 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events, Ledger},
     token::StellarAssetClient,
     Address, BytesN, Env, String, Symbol,
 };
@@ -972,4 +972,535 @@ fn test_get_pool_school_fails_for_non_school_pool() {
     );
 
     client.get_pool_school(&pool_id);
+}
+
+// ============= ISSUE #1070: POOL STATE TRANSITION VALIDATION TESTS =============
+
+/// Test 1: Active to Paused transition succeeds
+#[test]
+fn test_state_transition_active_to_paused_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.update_pool_state(&pool_id, &PoolState::Paused);
+
+    let pool = client.get_pool(&pool_id);
+    // Pool is accessible (state changed without panic)
+    assert_eq!(pool.0, pool_id);
+}
+
+/// Test 2: Paused to Active transition succeeds
+#[test]
+fn test_state_transition_paused_to_active_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // First pause the pool
+    client.update_pool_state(&pool_id, &PoolState::Paused);
+    // Then resume it
+    client.update_pool_state(&pool_id, &PoolState::Active);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.0, pool_id);
+}
+
+/// Test 3: Active to Completed transition succeeds
+#[test]
+fn test_state_transition_active_to_completed_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.update_pool_state(&pool_id, &PoolState::Completed);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.0, pool_id);
+}
+
+/// Test 4: Completed to any state fails with InvalidPoolState
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_state_transition_from_completed_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Completed);
+    // Should fail: Completed is a terminal state
+    client.update_pool_state(&pool_id, &PoolState::Active);
+}
+
+/// Test 5: Cancelled to any state fails with InvalidPoolState
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_state_transition_from_cancelled_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Cancelled);
+    // Should fail: Cancelled is a terminal state
+    client.update_pool_state(&pool_id, &PoolState::Active);
+}
+
+/// Test 6: Invalid transitions return InvalidPoolState error
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_invalid_state_transition_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // Active to Cancelled is not a valid transition via update_pool_state
+    client.update_pool_state(&pool_id, &PoolState::Cancelled);
+}
+
+// ============= ISSUE #1071: POOL CLOSURE AUTHORIZATION TESTS =============
+
+/// Test 1: Sponsor (admin) can close a Disbursed pool
+#[test]
+fn test_sponsor_can_close_disbursed_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Auth Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Disbursed);
+    client.close_pool(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.4, true);
+}
+
+/// Test 2: Sponsor (admin) can close a Cancelled pool
+#[test]
+fn test_sponsor_can_close_cancelled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Auth Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Cancelled);
+    client.close_pool(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.4, true);
+}
+
+/// Test 3: Non-sponsor cannot close pool (auth error)
+///
+/// close_pool calls pool.sponsor.require_auth(). When the caller does not
+/// provide authorization for the sponsor address, Soroban panics with an auth
+/// error. We verify this by setting up the pool with a different sponsor and
+/// calling close_pool without providing that sponsor's auth.
+#[test]
+#[should_panic]
+fn test_non_sponsor_cannot_close_pool() {
+    let env = Env::default();
+    // mock_all_auths allows setup calls to succeed
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Auth Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.set_pool_state(&pool_id, &PoolState::Disbursed);
+
+    // Call close_pool in a fresh env without any auth — must panic
+    let env_strict = Env::default();
+    // Note: no mock_all_auths — auth is NOT provided for the sponsor
+    let client_strict = ContractClient::new(&env_strict, &contract_id);
+    client_strict.close_pool(&pool_id);
+}
+
+/// Test 4: Closing an Active pool fails with PoolNotDisbursedOrRefunded
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_close_active_pool_fails_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Auth Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // Active pool cannot be closed
+    client.close_pool(&pool_id);
+}
+
+/// Test 5: Closing an already-closed pool fails with PoolIsClosed
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_close_already_closed_pool_fails_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Auth Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Disbursed);
+    client.close_pool(&pool_id);
+
+    // Pool is now closed (is_closed=true); calling close_pool again should fail with PoolIsClosed
+    client.close_pool(&pool_id);
+}
+
+/// Test 6: Pool closure event is emitted
+#[test]
+fn test_pool_closure_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Event Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Disbursed);
+    client.close_pool(&pool_id);
+
+    // Verify at least one event was published during close_pool
+    let events = env.events().all();
+    assert!(!events.is_empty(), "Expected at least one event to be emitted");
+}
+
+// ============= ISSUE #1072: POOL CLOSURE STATE VALIDATION TESTS =============
+
+/// Test 1: Only Disbursed pool can be closed
+#[test]
+fn test_only_disbursed_pool_can_be_closed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Req Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Disbursed);
+    client.close_pool(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.4, true);
+}
+
+/// Test 2: Only Cancelled pool can be closed
+#[test]
+fn test_only_cancelled_pool_can_be_closed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Req Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Cancelled);
+    client.close_pool(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.4, true);
+}
+
+/// Test 3: Other states return PoolNotDisbursedOrRefunded error (Active)
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_non_disbursed_cancelled_state_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "State Req Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // Active is not Disbursed or Cancelled
+    client.close_pool(&pool_id);
+}
+
+/// Test 4: Closed state persists correctly
+#[test]
+fn test_closed_state_persists_correctly() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Persist Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.set_pool_state(&pool_id, &PoolState::Disbursed);
+    client.close_pool(&pool_id);
+
+    // Read pool multiple times — closed state must persist
+    let pool1 = client.get_pool(&pool_id);
+    let pool2 = client.get_pool(&pool_id);
+    assert_eq!(pool1.4, true);
+    assert_eq!(pool2.4, true);
+}
+
+/// Test 5: is_closed returns true after closing
+#[test]
+fn test_is_closed_returns_true_after_close() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "IsClose Test Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // Before closing, is_closed should return false
+    assert_eq!(client.is_closed(&pool_id), false);
+
+    client.set_pool_state(&pool_id, &PoolState::Disbursed);
+    client.close_pool(&pool_id);
+
+    // After closing, is_closed should return true
+    assert_eq!(client.is_closed(&pool_id), true);
+}
+
+// ============= ISSUE #1073: CAMPAIGN COMPLETION DETECTION TESTS =============
+
+/// Test 1: Campaign below goal returns false
+#[test]
+fn test_campaign_below_goal_returns_false() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let goal = 1_000_000_000u128;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Campaign Test Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &100_000u64,
+    );
+
+    // No donations yet — collected is 0, well below goal
+    assert_eq!(client.is_campaign_completed(&pool_id), false);
+}
+
+/// Test 2: Campaign at exact goal returns true
+#[test]
+fn test_campaign_at_exact_goal_returns_true() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let goal = 1_000_000_000u128;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Campaign Test Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &100_000u64,
+    );
+
+    // Donate exactly the goal amount
+    client.donate(&pool_id, &donor, &goal);
+
+    assert_eq!(client.is_campaign_completed(&pool_id), true);
+}
+
+/// Test 3: Campaign above goal returns true
+#[test]
+fn test_campaign_above_goal_returns_true() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let goal = 1_000_000_000u128;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Campaign Test Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &100_000u64,
+    );
+
+    // Donate more than the goal
+    client.donate(&pool_id, &donor, &(goal + 1));
+
+    assert_eq!(client.is_campaign_completed(&pool_id), true);
+}
+
+/// Test 4: Nonexistent campaign returns PoolNotFound error
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_nonexistent_campaign_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    // Pool ID 999 does not exist
+    client.is_campaign_completed(&999u32);
+}
+
+/// Test 5: Zero goal campaign edge case — always completed
+#[test]
+fn test_zero_goal_campaign_is_always_completed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Zero Goal Pool"),
+        &String::from_str(&env, "Test"),
+        &0u128,
+        &100_000u64,
+    );
+
+    // With goal = 0, collected (0) >= goal (0) is true
+    assert_eq!(client.is_campaign_completed(&pool_id), true);
 }

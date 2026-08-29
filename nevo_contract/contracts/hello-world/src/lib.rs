@@ -518,6 +518,10 @@ impl Contract {
 
         pool.sponsor.require_auth();
 
+        if pool.is_closed {
+            env.panic_with_error(ContractError::PoolIsClosed);
+        }
+
         if pool.state != PoolState::Disbursed && pool.state != PoolState::Cancelled {
             env.panic_with_error(ContractError::PoolNotDisbursedOrRefunded);
         }
@@ -1035,13 +1039,6 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
-            .expect("Admin not set");
-        if stored_admin != admin {
-            panic!("Unauthorized admin");
-        }
-
-        if fee < 0 {
-            panic!("InvalidFee");
             .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
         if stored_admin != admin {
             env.panic_with_error(ContractError::UnauthorizedAdmin);
@@ -1054,11 +1051,6 @@ impl Contract {
         let fee_key = Symbol::new(&env, CREATION_FEE_KEY);
         env.storage().persistent().set(&fee_key, &fee);
 
-        // Emit event: topics = ["creation_fee_updated"], data = new fee value
-        env.events().publish(
-            (Symbol::new(&env, "creation_fee_updated"),),
-            fee,
-        );
         // Issue #954: use shared FEE_UPDATED constant instead of inline Symbol::new
         env.events().publish((FEE_UPDATED,), fee);
     }
@@ -1090,7 +1082,6 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.sponsor.require_auth();
@@ -1126,18 +1117,6 @@ impl Contract {
     ///   3. The grace period has elapsed
     ///      (`current_ledger >= deadline + REFUND_GRACE_PERIOD_LEDGERS`).
     ///
-    /// # Panics
-    /// - `"Pool not found"` if pool_id is invalid
-    /// - `"PoolNotExpired"` if the deadline has not passed yet
-    /// - `"PoolNotExpired"` if the pool is exactly at the deadline (no grace)
-    /// - `"PoolNotExpired"` if inside the grace period
-    /// - `"No contribution to refund"` if the donor has no recorded contribution
-    pub fn refund_donation(
-        env: Env,
-        pool_id: u32,
-        donor: Address,
-        token_address: Address,
-    ) {
     /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `ContractError::PoolNotExpired` if the deadline has not passed (or grace not elapsed)
     /// - `ContractError::NoContributionToRefund` if the donor has no recorded contribution
@@ -1148,7 +1127,6 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
-            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let deadline_key = (Symbol::new(&env, POOL_DEADLINE_PREFIX), pool_id);
@@ -1165,7 +1143,6 @@ impl Contract {
             || current_ledger <= deadline
             || current_ledger < deadline + REFUND_GRACE_PERIOD_LEDGERS
         {
-            panic!("PoolNotExpired");
             env.panic_with_error(ContractError::PoolNotExpired);
         }
 
@@ -1177,7 +1154,6 @@ impl Contract {
             .unwrap_or(0);
 
         if contribution == 0 {
-            panic!("No contribution to refund");
             env.panic_with_error(ContractError::NoContributionToRefund);
         }
 
@@ -1345,6 +1321,79 @@ impl Contract {
         );
 
         env.storage().persistent().remove(&withdrawal_key);
+    }
+
+    /// Update the state of a pool with validated transitions.
+    ///
+    /// Allowed transitions:
+    /// - Active → Paused
+    /// - Paused → Active
+    /// - Active → Completed
+    ///
+    /// Terminal states (Completed, Cancelled, Disbursed, Closed) cannot
+    /// transition to any other state.
+    ///
+    /// # Panics
+    /// - `ContractError::PoolNotFound` if pool_id is invalid
+    /// - `ContractError::InvalidPoolState` if the transition is not allowed
+    pub fn update_pool_state(env: Env, pool_id: u32, new_state: PoolState) {
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get::<_, Pool>(&pool_id)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
+
+        pool.sponsor.require_auth();
+
+        let valid = match (&pool.state, &new_state) {
+            (PoolState::Active, PoolState::Paused) => true,
+            (PoolState::Paused, PoolState::Active) => true,
+            (PoolState::Active, PoolState::Completed) => true,
+            _ => false,
+        };
+
+        if !valid {
+            env.panic_with_error(ContractError::InvalidPoolState);
+        }
+
+        let old_state = pool.state.clone();
+        pool.state = new_state.clone();
+        env.storage().persistent().set(&pool_id, &pool);
+
+        env.events()
+            .publish((POOL_STATE_SET, pool_id), (old_state, new_state));
+    }
+
+    /// Return whether a pool is closed.
+    ///
+    /// # Panics
+    /// - `ContractError::PoolNotFound` if pool_id is invalid
+    pub fn is_closed(env: Env, pool_id: u32) -> bool {
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get::<_, Pool>(&pool_id)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
+
+        pool.is_closed
+    }
+
+    /// Return whether a campaign has met or exceeded its funding goal.
+    ///
+    /// Returns `true` if `collected >= goal`, `false` otherwise.
+    /// A zero-goal campaign is considered completed if `collected >= 0`
+    /// (always true since collected is non-negative).
+    ///
+    /// # Panics
+    /// - `ContractError::PoolNotFound` if pool_id is invalid
+    pub fn is_campaign_completed(env: Env, pool_id: u32) -> bool {
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get::<_, Pool>(&pool_id)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
+
+        pool.collected >= pool.goal
     }
 
     // TODO: Replace with real implementation from issue #XYZ
