@@ -18,7 +18,7 @@ import { ApiResponseDto, PaginationMetaDto } from '../dto/api-response.dto';
  */
 @Injectable()
 export class ResponseInterceptor implements NestInterceptor {
-  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+  intercept(_context: ExecutionContext, next: CallHandler): Observable<unknown> {
     return next.handle().pipe(
       map((data) => {
         // If data is already wrapped in ApiResponseDto, return as-is

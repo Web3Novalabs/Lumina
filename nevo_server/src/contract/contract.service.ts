@@ -35,7 +35,7 @@ export class ContractService {
   /**
    * Submit a signed transaction to the network
    */
-  submitTransaction(signedXdr: string) {
+  submitTransaction(_signedXdr: string) {
     // Mock implementation - in production, would submit via Stellar Network
     const mockTxHash = '0x' + 'a'.repeat(64);
     const response = new ApiResponseDto(
@@ -54,24 +54,34 @@ export class ContractService {
    * Get contract state/data
    */
   getContractState(contractId: string) {
-    return {
-      contractId,
-      totalFunded: '500000',
-      activePools: 15,
-      lastUpdated: new Date().toISOString(),
-    };
+    const response = new ApiResponseDto(
+      {
+        contractId,
+        totalFunded: '500000',
+        activePools: 15,
+        lastUpdated: new Date().toISOString(),
+      },
+      true,
+      'Contract state retrieved successfully',
+    );
+    return response;
   }
 
   /**
    * Call a contract method
    */
   callContractMethod(contractId: string, method: string, params: Record<string, unknown>) {
-    return {
-      contractId,
-      method,
-      params,
-      result: 'success',
-      gasUsed: 12500,
-    };
+    const response = new ApiResponseDto(
+      {
+        contractId,
+        method,
+        params,
+        result: 'success',
+        gasUsed: 12500,
+      },
+      true,
+      'Contract method called successfully',
+    );
+    return response;
   }
 }

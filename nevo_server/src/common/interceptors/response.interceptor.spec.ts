@@ -17,11 +17,11 @@ describe('ResponseInterceptor', () => {
     const data = { id: 1, name: 'Test' };
     mockCallHandler = { handle: () => of(data) } as CallHandler;
 
-    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result) => {
+    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result: unknown) => {
       expect(result).toBeInstanceOf(ApiResponseDto);
-      expect(result.data).toEqual(data);
-      expect(result.success).toBe(true);
-      expect(result.timestamp).toBeDefined();
+      expect((result as ApiResponseDto).data).toEqual(data);
+      expect((result as ApiResponseDto).success).toBe(true);
+      expect((result as ApiResponseDto).timestamp).toBeDefined();
       done();
     });
   });
@@ -30,7 +30,7 @@ describe('ResponseInterceptor', () => {
     const wrapped = new ApiResponseDto({ id: 1 }, true, 'Already wrapped');
     mockCallHandler = { handle: () => of(wrapped) } as CallHandler;
 
-    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result) => {
+    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result: unknown) => {
       expect(result).toBe(wrapped);
       done();
     });
@@ -45,14 +45,15 @@ describe('ResponseInterceptor', () => {
     };
     mockCallHandler = { handle: () => of(data) } as CallHandler;
 
-    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result) => {
-      expect(result).toBeInstanceOf(ApiResponseDto);
-      expect(result.data).toEqual(data.items);
-      expect(result.pagination).toBeDefined();
-      expect(result.pagination?.page).toBe(1);
-      expect(result.pagination?.limit).toBe(10);
-      expect(result.pagination?.total).toBe(100);
-      expect(result.pagination?.totalPages).toBe(10);
+    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result: unknown) => {
+      const response = result as ApiResponseDto;
+      expect(response).toBeInstanceOf(ApiResponseDto);
+      expect(response.data).toEqual(data.items);
+      expect(response.pagination).toBeDefined();
+      expect(response.pagination?.page).toBe(1);
+      expect(response.pagination?.limit).toBe(10);
+      expect(response.pagination?.total).toBe(100);
+      expect(response.pagination?.totalPages).toBe(10);
       done();
     });
   });
@@ -64,9 +65,10 @@ describe('ResponseInterceptor', () => {
     };
     mockCallHandler = { handle: () => of(data) } as CallHandler;
 
-    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result) => {
-      expect(result.pagination?.page).toBe(1);
-      expect(result.pagination?.limit).toBe(10);
+    interceptor.intercept(mockExecutionContext, mockCallHandler).subscribe((result: unknown) => {
+      const response = result as ApiResponseDto;
+      expect(response.pagination?.page).toBe(1);
+      expect(response.pagination?.limit).toBe(10);
       done();
     });
   });

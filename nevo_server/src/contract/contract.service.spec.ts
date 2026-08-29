@@ -64,12 +64,14 @@ describe('ContractService', () => {
 
   describe('getContractState', () => {
     it('should return contract state', () => {
-      const result = service.getContractState('CONTRACT123');
+      const result = service.getContractState('CONTRACT123') as ApiResponseDto;
 
-      expect(result).toHaveProperty('contractId', 'CONTRACT123');
-      expect(result).toHaveProperty('totalFunded');
-      expect(result).toHaveProperty('activePools');
-      expect(result).toHaveProperty('lastUpdated');
+      expect(result).toBeInstanceOf(ApiResponseDto);
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveProperty('contractId', 'CONTRACT123');
+      expect(result.data).toHaveProperty('totalFunded');
+      expect(result.data).toHaveProperty('activePools');
+      expect(result.data).toHaveProperty('lastUpdated');
     });
   });
 
@@ -77,12 +79,14 @@ describe('ContractService', () => {
     it('should return method call result', () => {
       const result = service.callContractMethod('CONTRACT123', 'get_balance', {
         user: 'GADDRESS',
-      });
+      }) as ApiResponseDto;
 
-      expect(result).toHaveProperty('contractId', 'CONTRACT123');
-      expect(result).toHaveProperty('method', 'get_balance');
-      expect(result).toHaveProperty('result', 'success');
-      expect(result).toHaveProperty('gasUsed');
+      expect(result).toBeInstanceOf(ApiResponseDto);
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveProperty('contractId', 'CONTRACT123');
+      expect(result.data).toHaveProperty('method', 'get_balance');
+      expect(result.data).toHaveProperty('result', 'success');
+      expect(result.data).toHaveProperty('gasUsed');
     });
   });
 });

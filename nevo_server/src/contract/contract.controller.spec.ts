@@ -6,7 +6,6 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 
 describe('ContractController', () => {
   let controller: ContractController;
-  let service: ContractService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -21,7 +20,6 @@ describe('ContractController', () => {
     }).compile();
 
     controller = module.get<ContractController>(ContractController);
-    service = module.get<ContractService>(ContractService);
   });
 
   describe('POST /contract/contribute', () => {
@@ -36,7 +34,15 @@ describe('ContractController', () => {
       const result = controller.buildContribution(dto);
 
       expect(result).toBeDefined();
+      expect(result).toHaveProperty('data');
+      expect(result.data).toHaveProperty('poolId', '1');
+      expect(result.data).toHaveProperty('donor', 'GADDRESS');
+      expect(result.data).toHaveProperty('amount', '100');
+      expect(result.data).toHaveProperty('status', 'prepared');
       expect(result).toHaveProperty('unsignedXdr');
+      expect(result.unsignedXdr).toMatch(/^AAAA/); // XDR starts with AAAA
+      expect(result).toHaveProperty('success', true);
+      expect(result).toHaveProperty('timestamp');
     });
   });
 
@@ -47,7 +53,13 @@ describe('ContractController', () => {
       const result = controller.submitTransaction(dto);
 
       expect(result).toBeDefined();
+      expect(result).toHaveProperty('data');
+      expect(result.data).toHaveProperty('status', 'submitted');
+      expect(result.data).toHaveProperty('confirmations', 0);
       expect(result).toHaveProperty('txHash');
+      expect(result.txHash).toMatch(/^0x/); // Transaction hash starts with 0x
+      expect(result).toHaveProperty('success', true);
+      expect(result).toHaveProperty('timestamp');
     });
   });
 
@@ -56,8 +68,11 @@ describe('ContractController', () => {
       const result = controller.getContractState('CONTRACT123');
 
       expect(result).toBeDefined();
-      expect(result).toHaveProperty('contractId');
-      expect(result).toHaveProperty('totalFunded');
+      expect(result).toHaveProperty('data');
+      expect(result.data).toHaveProperty('contractId', 'CONTRACT123');
+      expect(result.data).toHaveProperty('totalFunded');
+      expect(result).toHaveProperty('success', true);
+      expect(result).toHaveProperty('timestamp');
     });
   });
 
@@ -72,7 +87,10 @@ describe('ContractController', () => {
       const result = controller.callContractMethod(dto);
 
       expect(result).toBeDefined();
-      expect(result).toHaveProperty('method', 'get_balance');
+      expect(result).toHaveProperty('data');
+      expect(result.data).toHaveProperty('method', 'get_balance');
+      expect(result).toHaveProperty('success', true);
+      expect(result).toHaveProperty('timestamp');
     });
   });
 });

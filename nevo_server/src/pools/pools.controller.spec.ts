@@ -6,7 +6,6 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 
 describe('PoolsController', () => {
   let controller: PoolsController;
-  let service: PoolsService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -21,17 +20,18 @@ describe('PoolsController', () => {
     }).compile();
 
     controller = module.get<PoolsController>(PoolsController);
-    service = module.get<PoolsService>(PoolsService);
   });
 
   describe('GET /pools', () => {
-    it('should return paginated pools', () => {
+    it('should return paginated pools with correct structure', () => {
       const result = controller.findAll(1, 10);
 
+      // Service returns pagination format that interceptor will detect and wrap
       expect(result).toHaveProperty('items');
       expect(result).toHaveProperty('total');
-      expect(result).toHaveProperty('page');
-      expect(result).toHaveProperty('limit');
+      expect(result).toHaveProperty('page', 1);
+      expect(result).toHaveProperty('limit', 10);
+      expect(Array.isArray(result.items)).toBe(true);
     });
   });
 
@@ -41,6 +41,13 @@ describe('PoolsController', () => {
 
       expect(pool).toBeDefined();
       expect(pool?.id).toBe(1);
+      expect(pool?.title).toBeDefined();
+      expect(pool?.description).toBeDefined();
+    });
+
+    it('should return undefined for non-existent pool', () => {
+      const pool = controller.findOne(9999);
+      expect(pool).toBeUndefined();
     });
   });
 
@@ -51,20 +58,31 @@ describe('PoolsController', () => {
         description: 'Test',
         category: 'Healthcare',
         goal: 50000,
+        yieldRate: 2.5,
       };
 
       const result = controller.create(dto);
 
       expect(result).toBeDefined();
       expect(result.title).toBe('New Pool');
+      expect(result.description).toBe('Test');
+      expect(result.raised).toBe(0);
+      expect(result.contributors).toBe(0);
+      expect(result.trending).toBe(false);
     });
   });
 
   describe('PATCH /pools/:id', () => {
     it('should update a pool', () => {
-      const updated = controller.update(1, { title: 'Updated' });
+      const updated = controller.update(1, { title: 'Updated Title' });
 
-      expect(updated?.title).toBe('Updated');
+      expect(updated?.title).toBe('Updated Title');
+      expect(updated?.id).toBe(1);
+    });
+
+    it('should return undefined for non-existent pool', () => {
+      const result = controller.update(9999, { title: 'Updated' });
+      expect(result).toBeUndefined();
     });
   });
 
@@ -73,6 +91,12 @@ describe('PoolsController', () => {
       const result = controller.remove(1);
 
       expect(result).toBeDefined();
+      expect(result?.id).toBe(1);
+    });
+
+    it('should return null for non-existent pool', () => {
+      const result = controller.remove(9999);
+      expect(result).toBeNull();
     });
   });
 });
