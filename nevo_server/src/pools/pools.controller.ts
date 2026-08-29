@@ -7,17 +7,12 @@ import {
   Param,
   Patch,
   Post,
+  Query,
+  ValidationPipe,
 } from '@nestjs/common';
+import { CreatePoolDto } from './dto/create-pool.dto';
+import { FilterPoolsDto } from './dto/filter-pools.dto';
 import { PoolsService } from './pools.service';
-
-export interface CreatePoolDto {
-  contractPoolId: string;
-  creatorWallet: string;
-  goal: string;
-  title?: string;
-  description?: string;
-  imageUrl?: string;
-}
 
 export interface UpdatePoolDto {
   description?: string;
@@ -33,6 +28,11 @@ export interface WithdrawDto {
 export class PoolsController {
   constructor(private readonly poolsService: PoolsService) {}
 
+  @Get()
+  async findAll(@Query(new ValidationPipe({ transform: true })) query: FilterPoolsDto) {
+    return this.poolsService.findAll(query);
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string) {
     const pool = await this.poolsService.findOneMerged(id);
@@ -41,7 +41,7 @@ export class PoolsController {
   }
 
   @Post()
-  create(@Body() dto: CreatePoolDto) {
+  create(@Body(new ValidationPipe({ transform: true, whitelist: true })) dto: CreatePoolDto) {
     return this.poolsService.create(dto);
   }
 
