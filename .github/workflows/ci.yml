@@ -1,18 +1,8 @@
 name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+on: [push, pull_request]
 jobs:
-  frontend:
-    name: Frontend — Build
+  build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./nevo_frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +16,23 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:3000
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
         run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Check for remaining mock data
+        working-directory: ./nevo_frontend
+        run: |
+          if grep -r "MOCK_" app/ src/store/ \
+            --include="*.ts" \
+            --include="*.tsx" -l; then
+            echo "ERROR: MOCK_ constants found. Remove all mock data before merging to main."
+            exit 1
+          fi
 
   server:
     name: Server — Build
@@ -78,3 +84,16 @@ jobs:
 
       - name: Run tests
         run: cargo test --lib
+
+  markdown-links:
+    name: Markdown — Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "yes"
+          config-file: ".github/mlc_config.json"

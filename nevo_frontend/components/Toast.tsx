@@ -1,6 +1,8 @@
+//Toast
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { CheckIcon, XIcon, InfoIcon } from '@/components/icons';
 
 export type ToastType = 'success' | 'error' | 'info';
 
@@ -35,57 +37,9 @@ function ToastItem({ toast: t, onDismiss }: ToastItemProps) {
   };
 
   const icon = {
-    success: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        strokeWidth={2}
-        stroke="currentColor"
-        className="size-4 shrink-0"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="m4.5 12.75 6 6 9-13.5"
-        />
-      </svg>
-    ),
-    error: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        strokeWidth={2}
-        stroke="currentColor"
-        className="size-4 shrink-0"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M6 18 18 6M6 6l12 12"
-        />
-      </svg>
-    ),
-    info: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        strokeWidth={2}
-        stroke="currentColor"
-        className="size-4 shrink-0"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"
-        />
-      </svg>
-    ),
+    success: <CheckIcon className="size-4 shrink-0" />,
+    error: <XIcon className="size-4 shrink-0" />,
+    info: <InfoIcon className="size-4 shrink-0" />,
   };
 
   return (
@@ -102,21 +56,7 @@ function ToastItem({ toast: t, onDismiss }: ToastItemProps) {
         className="ml-2 rounded p-0.5 hover:bg-white/20 transition-colors"
         aria-label="Dismiss notification"
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-          stroke="currentColor"
-          className="size-3"
-          aria-hidden="true"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M6 18 18 6M6 6l12 12"
-          />
-        </svg>
+        <XIcon className="size-3" />
       </button>
     </div>
   );

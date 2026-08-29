@@ -2,12 +2,15 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { signTransaction } from '@stellar/freighter-api';
 import { useWalletStore } from '@/src/store/walletStore';
 import { EmptyState } from '@/components/EmptyState';
 import ConnectWallet from '@/components/ConnectWallet';
 import { WalletAddress } from '@/components/WalletAddress';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
+import { signTransaction } from '@stellar/freighter-api';
 
 // TODO: Replace with real API call once backend pool endpoints are implemented
 const MOCK_CREATOR_POOLS: Pool[] = [
@@ -65,8 +68,23 @@ function DashboardPageContent() {
   const { publicKey, loading, initialize } = useWalletStore();
   const [pools, setPools] = useState<Pool[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
+  const [confirming, setConfirming] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const loadPools = useCallback(async () => {
+    if (!publicKey) return;
+    setLoadingPools(true);
+    try {
+      const data = await apiClient.get<Pool[]>(`/pools?creator=${publicKey}`);
+      setPools(data ?? []);
+    } catch {
+      setPools([]);
+    } finally {
+      setLoadingPools(false);
+    }
+  }, [publicKey]);
 
   useEffect(() => {
     initialize();
@@ -76,8 +94,17 @@ function DashboardPageContent() {
     if (!publicKey) return;
     // TODO: Replace with real fetch filtered by creator === publicKey
     const timer = setTimeout(() => {
-      setPools(MOCK_CREATOR_POOLS);
-      setLoadingPools(false);
+      try {
+        setPools(MOCK_CREATOR_POOLS);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load pools';
+        console.error('Failed to load pools:', err);
+        setError(message);
+        toast(message, 'error');
+      } finally {
+        setLoadingPools(false);
+      }
     }, 400);
     return () => clearTimeout(timer);
   }, [publicKey]);
@@ -175,10 +202,7 @@ function DashboardPageContent() {
           <button
             className="rounded-lg border border-[var(--color-border)] px-3 py-1 hover:bg-[var(--color-border)] transition-colors"
             aria-label="Archive selected pools"
-            onClick={() => {
-              // TODO: bulk archive action
-              setSelectedIds(new Set());
-            }}
+            onClick={archiveSelectedPools}
           >
             Archive selected
           </button>
@@ -188,6 +212,14 @@ function DashboardPageContent() {
       {/* ── Pool list ───────────────────────────────────────────────────── */}
       {loading || loadingPools ? (
         <PoolListSkeleton />
+      ) : error ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        >
+          <p className="font-medium">Failed to load pools</p>
+          <p className="mt-1">{error}</p>
+        </div>
       ) : pools.length === 0 ? (
         <EmptyState
           icon="pool"
@@ -238,9 +270,47 @@ function DashboardPageContent() {
         <ConfirmModal
           modal={actionModal}
           onClose={() => setActionModal(null)}
-          onConfirm={() => {
-            // TODO: wire to real withdraw / archive contract calls
-            setActionModal(null);
+          onConfirm={async () => {
+            if (!actionModal) return;
+
+            try {
+              if (actionModal.type === 'withdraw') {
+                const { unsignedXdr } = await withdrawPool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Withdrawal successful');
+              } else {
+                const { unsignedXdr } = await closePool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Pool archived successfully');
+              }
+            } catch (err: unknown) {
+              const error = err as Error;
+              toast(error.message || 'Failed to complete action', 'error');
+              console.error(error);
+            } finally {
+              setActionModal(null);
+              void loadPools();
+            }
           }}
         />
       )}
@@ -389,10 +459,12 @@ function ConfirmModal({
   modal,
   onClose,
   onConfirm,
+  confirming,
 }: {
   modal: NonNullable<ActionModal>;
   onClose: () => void;
   onConfirm: () => void;
+  confirming: boolean;
 }) {
   const isWithdraw = modal.type === 'withdraw';
 
@@ -422,15 +494,21 @@ function ConfirmModal({
         <div className="mt-5 flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+            disabled={confirming}
+            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
+            disabled={confirming}
+            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60 disabled:cursor-not-allowed ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
           >
-            {isWithdraw ? 'Confirm Withdraw' : 'Archive'}
+            {confirming
+              ? 'Processing…'
+              : isWithdraw
+                ? 'Confirm Withdraw'
+                : 'Archive'}
           </button>
         </div>
       </div>

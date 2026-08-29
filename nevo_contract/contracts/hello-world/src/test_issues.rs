@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Ledger},
     token::StellarAssetClient,
-    Address, Env, IntoVal, String, Symbol, Vec,
+    Address, BytesN, Env, String, Symbol,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -182,7 +182,7 @@ fn test_contribute_to_active_pool_succeeds() {
 
 /// Test 2: Contribute to Closed pool fails
 #[test]
-#[should_panic(expected = "Pool is closed")]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_contribute_to_closed_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -209,9 +209,88 @@ fn test_contribute_to_closed_pool_fails() {
     client.donate_with_token(&pool_id, &donor, &token, &100_000_000i128);
 }
 
-// NOTE: Tests for Paused, Completed, Cancelled, and Disbursed states require set_pool_state
-// which has SDK limitations with enum parameters. These will be added when the real
-// implementation is available from the dependent issue.
+/// Test 3: Contribute to a Paused pool fails (Issue #943)
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_contribute_to_paused_pool_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token = create_token(&env, 100_000_000i128, &donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Paused Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.set_pool_state(&pool_id, &PoolState::Paused);
+
+    // Should fail with InvalidPoolState
+    client.donate_with_token(&pool_id, &donor, &token, &100_000_000i128);
+}
+
+/// Test 4: Contribute to a Completed pool fails (Issue #943)
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_contribute_to_completed_pool_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token = create_token(&env, 100_000_000i128, &donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Completed Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.set_pool_state(&pool_id, &PoolState::Completed);
+
+    // Should fail with InvalidPoolState
+    client.donate_with_token(&pool_id, &donor, &token, &100_000_000i128);
+}
+
+/// Test 5: Contribute to a Cancelled pool fails (Issue #943)
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_contribute_to_cancelled_pool_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token = create_token(&env, 100_000_000i128, &donor);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Cancelled Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.set_pool_state(&pool_id, &PoolState::Cancelled);
+
+    // Should fail with InvalidPoolState
+    client.donate_with_token(&pool_id, &donor, &token, &100_000_000i128);
+}
+
+// NOTE: Disbursed state is intentionally not covered here: it is not part of
+// the Paused/Completed/Cancelled gap this issue targets, and is reachable
+// only via the test-only `set_pool_state` helper (no production flow drives
+// a pool from Active to Disbursed before donations close).
 
 // ============= ISSUE #459: COMPREHENSIVE TESTS FOR EMERGENCY WITHDRAWAL AUTHORIZATION =============
 
@@ -498,7 +577,7 @@ fn test_close_cancelled_pool_succeeds() {
 
 /// Test 3: Close pool in Active state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_active_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -521,7 +600,7 @@ fn test_close_active_pool_fails() {
 
 /// Test 4: Close pool in Paused state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_paused_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -547,7 +626,7 @@ fn test_close_paused_pool_fails() {
 
 /// Test 5: Close pool in Completed state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_completed_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -573,7 +652,7 @@ fn test_close_completed_pool_fails() {
 
 /// Test 6: Close pool in Closed state fails with PoolNotDisbursedOrRefunded error
 #[test]
-#[should_panic(expected = "PoolNotDisbursedOrRefunded")]
+#[should_panic(expected = "Error(Contract, #8)")]
 fn test_close_already_closed_pool_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -628,4 +707,269 @@ fn test_closed_state_persists() {
     // Verify state persists across multiple reads
     let pool2 = client.get_pool(&pool_id);
     assert_eq!(pool2.4, true);
+}
+
+// ============= ISSUE #939: REFUND_DONATION TESTS =============
+
+/// Test 1: Donor is refunded once the deadline has passed AND the grace
+/// period (REFUND_GRACE_PERIOD_LEDGERS) has fully elapsed.
+#[test]
+fn test_refund_donation_after_grace_period_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    // Raise the default persistent-entry TTL (4096 ledgers) so that jumping
+    // the ledger sequence forward past the deadline + grace period doesn't
+    // archive the contract instance / pool storage entries in the test sandbox.
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 50_000_000u128;
+    // Fund the contract directly (mirrors the withdraw_unallocated_funds
+    // regression test): `donate` only updates accounting, so the contract
+    // needs a real token balance for `refund_donation`'s transfer to work.
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor, &contribution);
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+
+    // Advance exactly to the boundary: deadline + REFUND_GRACE_PERIOD_LEDGERS.
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS);
+
+    client.refund_donation(&pool_id, &donor, &token);
+
+    // Donor received their contribution back.
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&donor), contribution as i128);
+
+    // Pool's collected amount and the donor's recorded contribution are both cleared.
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.3, 0u128);
+    assert_eq!(client.get_contribution(&pool_id, &donor), 0u128);
+}
+
+/// Test 2: Refund fails when no deadline was ever set on the pool.
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_refund_donation_no_deadline_set_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 50_000_000u128;
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor, &contribution);
+
+    // No deadline was ever set -> refund must be rejected with PoolNotExpired.
+    client.refund_donation(&pool_id, &donor, &token);
+}
+
+/// Test 3: Refund fails when the deadline is set but has not passed yet.
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_refund_donation_before_deadline_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 50_000_000u128;
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor, &contribution);
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+
+    // Ledger sequence is still 0 (the default) -- well before the deadline.
+    client.refund_donation(&pool_id, &donor, &token);
+}
+
+/// Test 4: Refund fails when the deadline has passed but the grace period
+/// has not fully elapsed yet -- one ledger short of the boundary.
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_refund_donation_within_grace_period_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    // Raise the default persistent-entry TTL so the ledger-sequence jump
+    // below doesn't archive the contract instance / pool storage entries.
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let contribution = 50_000_000u128;
+    let token = create_token(&env, contribution as i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    client.donate(&pool_id, &donor, &contribution);
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+
+    // One ledger short of deadline + REFUND_GRACE_PERIOD_LEDGERS: the
+    // deadline has passed, but the grace period has not fully elapsed.
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS - 1);
+
+    client.refund_donation(&pool_id, &donor, &token);
+}
+
+/// Test 5: Refund fails for a donor who never contributed to the pool.
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_refund_donation_no_contribution_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    // Raise the default persistent-entry TTL so the ledger-sequence jump
+    // below doesn't archive the contract instance / pool storage entries.
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 20_000;
+    });
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env); // never donates
+    let token = create_token(&env, 50_000_000i128, &contract_id);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Refund Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline: u32 = 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+    env.ledger()
+        .set_sequence_number(deadline + REFUND_GRACE_PERIOD_LEDGERS);
+
+    // Donor never contributed -> NoContributionToRefund.
+    client.refund_donation(&pool_id, &donor, &token);
+}
+
+// ============= ISSUE #941: CREATE_POOL_FOR_SCHOOL / GET_POOL_SCHOOL TESTS =============
+
+/// Test 1: A registered school can back a pool, and get_pool_school returns it.
+#[test]
+fn test_create_pool_for_school_succeeds_for_registered_school() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let school = Address::generate(&env);
+    let metadata_hash = BytesN::from_array(&env, &[6u8; 32]);
+    client.register_school(&school, &metadata_hash);
+
+    let creator = Address::generate(&env);
+    let goal = 250_000_000u128;
+    let pool_id = client.create_pool_for_school(
+        &creator,
+        &String::from_str(&env, "School Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &school,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_pool_school(&pool_id), school);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.1, creator);
+    assert_eq!(pool.2, goal);
+    assert_eq!(pool.3, 0u128);
+}
+
+/// Test 2: Creating a school-linked pool for an unregistered school panics.
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")]
+fn test_create_pool_for_school_unregistered_school_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let unregistered_school = Address::generate(&env);
+
+    // No `register_school` call was made for this address.
+    client.create_pool_for_school(
+        &creator,
+        &String::from_str(&env, "School Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &unregistered_school,
+        &100_000u64,
+    );
+}
+
+/// Test 3: get_pool_school panics for a pool with no linked school (i.e. one
+/// created via the normal, non-school `create_pool` path).
+#[test]
+#[should_panic(expected = "Pool school not set")]
+fn test_get_pool_school_fails_for_non_school_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Regular Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.get_pool_school(&pool_id);
 }
