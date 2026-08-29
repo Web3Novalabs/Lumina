@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
 
 export class UpdatePoolDto {
   @ApiPropertyOptional({ maxLength: 1000 })
@@ -11,6 +11,7 @@ export class UpdatePoolDto {
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
+  @IsUrl()
   imageUrl?: string | null;
 
   @ApiPropertyOptional({ maxLength: 100 })
