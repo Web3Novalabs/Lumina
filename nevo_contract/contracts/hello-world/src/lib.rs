@@ -1,17 +1,12 @@
 #![cfg_attr(not(test), no_std)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
+    Env, String, Symbol, Vec,
 };
 
 // Storage key constants
 const POOL_COUNT: &str = "pool_count";
-const POOL_PREFIX: &str = "p";
-const CREATOR_SUFFIX: &str = "_creator";
-const GOAL_SUFFIX: &str = "_goal";
-const COLLECTED_SUFFIX: &str = "_collected";
-const CLOSED_SUFFIX: &str = "_closed";
 const APPLICATION_COUNT_PREFIX: &str = "a_count_";
 const APPLICATION_PREFIX: &str = "a_";
 const APPLICANT_PREFIX: &str = "ap_";
@@ -55,6 +50,7 @@ const DONATION_MADE: Symbol = symbol_short!("donation");
 const CONTRIBUTION: Symbol = symbol_short!("contrib");
 const POOL_CLOSED: Symbol = symbol_short!("pool_cls");
 const APPLICATION_SUBMITTED: Symbol = symbol_short!("app_sub");
+const SCHOOL_REGISTERED: Symbol = symbol_short!("schl_reg");
 
 // Issue #954: named constants for previously-uneventful state-changing functions
 const APP_APPROVED: Symbol = symbol_short!("app_aprvd");
@@ -167,16 +163,44 @@ pub struct Application {
     pub amount_claimed: i128,
 }
 
-// TODO: Replace with real implementation from issue #XYZ
-// Pool state enum for contribution validation
+/// Pool state machine enum representing the lifecycle of a donation pool.
+///
+/// # State Machine
+///
+/// The pool progresses through states as follows:
+/// - **Active** (initial state): Pool accepts donations and applications
+/// - **Paused**: Pool temporarily halted, donations and applications rejected
+/// - **Completed**: Funding goal reached
+/// - **Cancelled**: Pool was cancelled by sponsor or admin
+/// - **Disbursed**: Funds have been distributed to approved students
+/// - **Closed**: Pool is permanently closed, no further operations allowed
+///
+/// # State Transitions
+///
+/// Current state transition functions:
+/// - `create_pool()` / `create_pool_for_school()`: Initializes pool to `Active`
+/// - `donate()`: Validates pool is `Active` (rejects if `Closed`)
+/// - `close_pool()`: Requires pool to be `Disbursed` or `Cancelled` before closing
+///
+/// # Validation Rules
+///
+/// - `donate()` only accepts donations if state is `Active`
+/// - `close_pool()` only allows closing from `Disbursed` or `Cancelled` states
+/// - Other state transitions are not yet implemented (see TODO comments)
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PoolState {
+    /// Pool is active and accepting donations and student applications.
     Active,
+    /// Pool is temporarily paused; donations and applications are rejected.
     Paused,
+    /// Funding goal has been reached.
     Completed,
+    /// Pool has been cancelled and is no longer accepting funds or applications.
     Cancelled,
+    /// Funds have been dispersed to approved students; no new disbursements allowed.
     Disbursed,
+    /// Pool is permanently closed; no further operations are permitted.
     Closed,
 }
 
@@ -226,35 +250,44 @@ impl Contract {
         env.events().publish((ADMIN_SET,), admin.clone());
     }
 
-    /// Register a school by admin authorization.
-    pub fn register_school(env: Env, admin: Address, school: Address) {
-        admin.require_auth();
-
+    /// Register a school's on-chain identity mapping.
+    ///
+    /// Only the root protocol admin (set via [`Contract::set_admin`]) may call
+    /// this. The `metadata_hash` is a 32-byte digest of the accredited body's
+    /// off-chain metadata and is written to persistent ledger storage keyed by
+    /// `school_addr`. Registering an already-registered school overwrites its
+    /// metadata hash, allowing efficient in-place updates.
+    pub fn register_school(env: Env, school_addr: Address, metadata_hash: BytesN<32>) {
         let admin_key = Symbol::new(&env, ADMIN_KEY);
-        let stored_admin: Address = env
+        let admin: Address = env
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
-            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
-        if stored_admin != admin {
-            env.panic_with_error(ContractError::UnauthorizedAdmin);
-        }
+            .expect("Admin not set");
 
-        let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school.clone());
-        env.storage().persistent().set(&school_key, &true);
+        // Enforce root protocol admin authorization.
+        admin.require_auth();
 
-        // Issue #954: emit school-registered event
+        let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school_addr.clone());
+        env.storage().persistent().set(&school_key, &metadata_hash);
+
         env.events()
-            .publish((SCHOOL_REG, admin.clone()), school.clone());
+            .publish((SCHOOL_REGISTERED, school_addr), metadata_hash);
     }
 
     /// Check if a school has been registered.
     pub fn is_school_registered(env: Env, school: Address) -> bool {
         let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school);
+        env.storage().persistent().has(&school_key)
+    }
+
+    /// Return the metadata hash recorded for a registered school.
+    pub fn get_school_metadata(env: Env, school: Address) -> BytesN<32> {
+        let school_key = (Symbol::new(&env, SCHOOL_REG_PREFIX), school);
         env.storage()
             .persistent()
-            .get::<_, bool>(&school_key)
-            .unwrap_or(false)
+            .get::<_, BytesN<32>>(&school_key)
+            .expect("School not registered")
     }
 
     // ─── Pool Management ─────────────────────────────────────────────────────
@@ -281,15 +314,6 @@ impl Contract {
 
         let pool_id = pool_count + 1;
         pool_count = pool_id;
-
-        // Legacy compatibility: keep old symbolic key constants reachable.
-        let _ = (
-            POOL_PREFIX,
-            CREATOR_SUFFIX,
-            GOAL_SUFFIX,
-            COLLECTED_SUFFIX,
-            CLOSED_SUFFIX,
-        );
 
         let metadata_key = (Symbol::new(&env, "metadata"), pool_id);
         env.storage()
@@ -779,7 +803,11 @@ impl Contract {
                     .unwrap_or(String::from_str(&env, ""));
 
                 if status == approved_str || status == pending_str {
-                    let claim_key = (CLAIMED_AMOUNT_PREFIX, pool_id, student.clone());
+                    let claim_key = (
+                        Symbol::new(&env, CLAIMED_AMOUNT_PREFIX),
+                        pool_id,
+                        student.clone(),
+                    );
                     let application: Application = env
                         .storage()
                         .persistent()
@@ -983,6 +1011,14 @@ impl Contract {
     ///
     /// Only the stored admin may call this function.
     /// A fee of zero is valid (disables the creation fee).
+    /// A negative fee panics with `"InvalidFee"`.
+    ///
+    /// Emits a `creation_fee_updated` event on success.
+    ///
+    /// # Panics
+    /// - `"Admin not set"` if no admin has been configured
+    /// - `"Unauthorized admin"` if `admin` does not match the stored admin
+    /// - `"InvalidFee"` if `fee` is negative
     /// A negative fee panics with `ContractError::InvalidFee`.
     ///
     /// Emits a `FEE_UPDATED` event on success.
@@ -999,6 +1035,13 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
+            .expect("Admin not set");
+        if stored_admin != admin {
+            panic!("Unauthorized admin");
+        }
+
+        if fee < 0 {
+            panic!("InvalidFee");
             .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
         if stored_admin != admin {
             env.panic_with_error(ContractError::UnauthorizedAdmin);
@@ -1011,6 +1054,11 @@ impl Contract {
         let fee_key = Symbol::new(&env, CREATION_FEE_KEY);
         env.storage().persistent().set(&fee_key, &fee);
 
+        // Emit event: topics = ["creation_fee_updated"], data = new fee value
+        env.events().publish(
+            (Symbol::new(&env, "creation_fee_updated"),),
+            fee,
+        );
         // Issue #954: use shared FEE_UPDATED constant instead of inline Symbol::new
         env.events().publish((FEE_UPDATED,), fee);
     }
@@ -1033,6 +1081,7 @@ impl Contract {
     /// The deadline must be in the future (greater than the current ledger).
     ///
     /// # Panics
+    /// - `"Pool not found"` if pool_id is invalid
     /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `"Error(Auth, InvalidAction)"` if caller is not the pool sponsor
     /// - `"Deadline must be in the future"` if deadline <= current ledger
@@ -1041,6 +1090,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
+            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.sponsor.require_auth();
@@ -1077,6 +1127,17 @@ impl Contract {
     ///      (`current_ledger >= deadline + REFUND_GRACE_PERIOD_LEDGERS`).
     ///
     /// # Panics
+    /// - `"Pool not found"` if pool_id is invalid
+    /// - `"PoolNotExpired"` if the deadline has not passed yet
+    /// - `"PoolNotExpired"` if the pool is exactly at the deadline (no grace)
+    /// - `"PoolNotExpired"` if inside the grace period
+    /// - `"No contribution to refund"` if the donor has no recorded contribution
+    pub fn refund_donation(
+        env: Env,
+        pool_id: u32,
+        donor: Address,
+        token_address: Address,
+    ) {
     /// - `ContractError::PoolNotFound` if pool_id is invalid
     /// - `ContractError::PoolNotExpired` if the deadline has not passed (or grace not elapsed)
     /// - `ContractError::NoContributionToRefund` if the donor has no recorded contribution
@@ -1087,6 +1148,7 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Pool>(&pool_id)
+            .expect("Pool not found");
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         let deadline_key = (Symbol::new(&env, POOL_DEADLINE_PREFIX), pool_id);
@@ -1103,6 +1165,7 @@ impl Contract {
             || current_ledger <= deadline
             || current_ledger < deadline + REFUND_GRACE_PERIOD_LEDGERS
         {
+            panic!("PoolNotExpired");
             env.panic_with_error(ContractError::PoolNotExpired);
         }
 
@@ -1114,6 +1177,7 @@ impl Contract {
             .unwrap_or(0);
 
         if contribution == 0 {
+            panic!("No contribution to refund");
             env.panic_with_error(ContractError::NoContributionToRefund);
         }
 
@@ -1312,3 +1376,4 @@ impl Contract {
 
 mod test;
 mod test_issues;
+mod test_register_school;
