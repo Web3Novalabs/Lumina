@@ -1220,8 +1220,16 @@ impl Contract {
             .set(&contrib_key, &(current_contrib + (amount as u128)));
     }
 
-    // TODO: Replace with real implementation from issue #XYZ
-    // Mock emergency withdrawal request function
+    /// Request an emergency withdrawal for a pool.
+    ///
+    /// Only the currently configured admin may submit this request. The function
+    /// stores an `EmergencyWithdrawalRequest` keyed by the pool id, including the
+    /// token address, amount, ledger timestamp, and the admin who requested it.
+    ///
+    /// # Panics
+    /// - `ContractError::AdminNotSet` if no admin has been configured
+    /// - `"Error(Auth, InvalidAction)"` if the caller is not the stored admin
+    /// - `"EmergencyWithdrawalAlreadyRequested"` if a request already exists for the pool
     pub fn request_emergency_withdraw(
         env: Env,
         admin: Address,

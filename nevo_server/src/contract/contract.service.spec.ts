@@ -1,6 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { TransactionBuilder, Networks, Keypair } from '@stellar/stellar-sdk';
+import {
+  TransactionBuilder,
+  Networks,
+  Keypair,
+  nativeToScVal,
+} from '@stellar/stellar-sdk';
 import { ContractService } from './contract.service.js';
 import { StellarError } from './stellar.error.js';
 
@@ -74,6 +79,19 @@ describe('ContractService', () => {
       const tokenAddress = Keypair.random().publicKey();
       const xdr = service.buildWithdrawTransaction(SOURCE, 1, tokenAddress);
       expect(xdr.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('buildTransaction', () => {
+    it('builds a valid transaction from a contract operation', () => {
+      const operation = service['contract'].call(
+        'close_pool',
+        nativeToScVal(1, { type: 'u32' }),
+        nativeToScVal(SOURCE, { type: 'address' }),
+      );
+
+      const xdr = service['buildTransaction'](SOURCE, operation);
+      expect(() => TransactionBuilder.fromXDR(xdr, NETWORK)).not.toThrow();
     });
   });
 

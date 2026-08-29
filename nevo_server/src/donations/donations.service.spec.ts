@@ -36,6 +36,25 @@ describe('DonationsService', () => {
         order: { createdAt: 'DESC' },
       });
     });
+
+    it('orders largest donations by numeric amount for the selected pool', async () => {
+      const qb = {
+        where: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([{ id: 1, poolId: '1', amount: '250' }]),
+      };
+      mockRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.findByPool('1', 'largest' as any, 2, 5);
+
+      expect(result).toEqual([{ id: 1, poolId: '1', amount: '250' }]);
+      expect(qb.where).toHaveBeenCalledWith('d.poolId = :poolId', { poolId: '1' });
+      expect(qb.orderBy).toHaveBeenCalledWith('CAST(d.amount AS NUMERIC)', 'DESC');
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
+    });
   });
 
   describe('findByDonor', () => {
@@ -47,6 +66,27 @@ describe('DonationsService', () => {
         where: { donorWallet: 'ABC' },
         order: { createdAt: 'DESC' },
       });
+    });
+
+    it('orders largest donations by numeric amount for the selected donor', async () => {
+      const qb = {
+        where: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([{ id: 2, donorWallet: 'ABC', amount: '300' }]),
+      };
+      mockRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.findByDonor('ABC', 'largest' as any, 2, 5);
+
+      expect(result).toEqual([{ id: 2, donorWallet: 'ABC', amount: '300' }]);
+      expect(qb.where).toHaveBeenCalledWith('d.donorWallet = :donorWallet', {
+        donorWallet: 'ABC',
+      });
+      expect(qb.orderBy).toHaveBeenCalledWith('CAST(d.amount AS NUMERIC)', 'DESC');
+      expect(qb.skip).toHaveBeenCalledWith(5);
+      expect(qb.take).toHaveBeenCalledWith(5);
     });
   });
 
