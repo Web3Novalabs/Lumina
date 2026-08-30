@@ -16,6 +16,8 @@ async function bootstrap() {
     }),
   );
 
+  app.enableShutdownHooks();
+
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Nevo API')
     .setDescription(
