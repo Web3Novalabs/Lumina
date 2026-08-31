@@ -463,6 +463,8 @@ impl Contract {
     }
 
     /// Donate to an existing pool.
+    ///
+    /// **Note:** This function does **not** require donor authentication (`donor.require_auth()`) and only updates internal accounting. It does not perform a token transfer. Use `donate_with_token()` for token-backed donations that include donor auth.
     pub fn donate(env: Env, pool_id: u32, donor: Address, amount: u128) {
         let pool: Pool = env
             .storage()
