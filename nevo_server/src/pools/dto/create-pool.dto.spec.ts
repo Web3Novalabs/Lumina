@@ -17,7 +17,7 @@ describe('CreatePoolDto (POST /pools body contract)', () => {
   /** A minimal fully-valid payload that should always pass validation. */
   const validBody = {
     contractPoolId: 'pool-abc-123',
-    creatorWallet: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+    creatorWallet: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCW7M',
     title: 'Clean Water Initiative',
     description: 'Providing clean drinking water to rural communities.',
     goal: '1000000000',
@@ -101,6 +101,15 @@ describe('CreatePoolDto (POST /pools body contract)', () => {
     await request(app.getHttpServer())
       .post('/pools')
       .send(bodyWithoutWallet)
+      .expect(400);
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed creatorWallet with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/pools')
+      .send({ ...validBody, creatorWallet: 'not-a-stellar-key' })
       .expect(400);
 
     expect(create).not.toHaveBeenCalled();
