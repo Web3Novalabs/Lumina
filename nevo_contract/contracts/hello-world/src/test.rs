@@ -809,6 +809,7 @@ fn test_refund_before_deadline_fails_with_pool_not_expired() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing refund deadline"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     // Donate so there is something to refund
@@ -841,6 +842,7 @@ fn test_refund_exactly_at_deadline_fails() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing refund at deadline"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     let token_address = create_token(&env, 500_000_000, &donor);
@@ -876,6 +878,7 @@ fn test_refund_after_deadline_but_before_grace_period_fails() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing refund in grace period"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     let token_address = create_token(&env, 500_000_000, &donor);
@@ -912,6 +915,7 @@ fn test_refund_after_grace_period_succeeds() {
         &String::from_str(&env, "Refund Test Pool"),
         &String::from_str(&env, "Testing successful refund"),
         &1_000_000_000,
+        &100_000u64,
     );
 
     // Donate 500_000_000 tokens to the pool via donate_with_token
