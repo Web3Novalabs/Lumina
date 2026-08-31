@@ -147,6 +147,31 @@ describe('CreatePoolDto (POST /pools body contract)', () => {
       .expect(201);
   });
 
+  it('rejects a category that exceeds 100 characters with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/pools')
+      .send({ ...validBody, category: 'C'.repeat(101) })
+      .expect(400);
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a category exactly at the 100-character limit', async () => {
+    await request(app.getHttpServer())
+      .post('/pools')
+      .send({ ...validBody, category: 'C'.repeat(100) })
+      .expect(201);
+  });
+
+  it('rejects an invalid imageUrl string with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/pools')
+      .send({ ...validBody, imageUrl: 'not-a-url' })
+      .expect(400);
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-numeric goal string with 400', async () => {
     await request(app.getHttpServer())
       .post('/pools')
