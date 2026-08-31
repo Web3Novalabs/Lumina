@@ -4,8 +4,11 @@ import {
   IsNumberString,
   IsOptional,
   IsString,
+  IsUrl,
+  Matches,
   MaxLength,
 } from 'class-validator';
+import { STELLAR_PUBLIC_KEY } from '../../common/stellar-public-key.js';
 
 export class CreatePoolDto {
   @ApiProperty({ description: 'Pool id assigned by the contract on-chain.' })
@@ -16,6 +19,9 @@ export class CreatePoolDto {
   @ApiProperty({ description: 'Stellar public key (G...) of the creator.' })
   @IsString()
   @IsNotEmpty()
+  @Matches(STELLAR_PUBLIC_KEY, {
+    message: 'creatorWallet must be a valid Stellar public key (G...)',
+  })
   creatorWallet: string;
 
   @ApiProperty({ maxLength: 100 })
@@ -37,13 +43,19 @@ export class CreatePoolDto {
   @IsNumberString()
   goal: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Category of the pool (e.g., Education, Healthcare, etc.)',
+  })
   @IsOptional()
   @IsString()
   category?: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    description: 'URL to the pool\'s image',
+    nullable: true,
+  })
   @IsOptional()
   @IsString()
+  @IsUrl()
   imageUrl?: string | null;
 }
