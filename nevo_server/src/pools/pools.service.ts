@@ -70,15 +70,11 @@ export class PoolsService {
     const queryBuilder = this.poolRepo.createQueryBuilder('pool');
 
     if (query.category) {
-      queryBuilder.andWhere('LOWER(pool.category) = LOWER(:category)', {
-        category: query.category,
-      });
+      queryBuilder.andWhere('LOWER(pool.category) = LOWER(:category)', { category: query.category });
     }
 
     if (query.status) {
-      queryBuilder.andWhere('pool.status = :status', {
-        status: query.status,
-      });
+      queryBuilder.andWhere('pool.status = :status', { status: query.status });
     }
 
     if (query.search) {
@@ -89,15 +85,8 @@ export class PoolsService {
     }
 
     queryBuilder.orderBy('pool.createdAt', 'DESC').skip(skip).take(limit);
-
     const [data, total] = await queryBuilder.getManyAndCount();
-
-    return {
-      data,
-      total,
-      page,
-      limit,
-    };
+    return { data, total, page, limit };
   }
 
   async create(dto: CreatePoolDto): Promise<Pool> {
@@ -126,17 +115,6 @@ export class PoolsService {
     if (dto.imageUrl !== undefined) pool.imageUrl = dto.imageUrl;
     if (dto.category !== undefined) pool.category = dto.category;
     return this.poolRepo.save(pool);
-  }
-
-  async findAll(query: FilterPoolsDto): Promise<Pool[]> {
-    if (!query.search) return this.poolRepo.find();
-
-    return this.poolRepo
-      .createQueryBuilder('pool')
-      .where('pool.title ILIKE :search OR pool.description ILIKE :search', {
-        search: `%${query.search}%`,
-      })
-      .getMany();
   }
 
   async findByContractId(contractPoolId: string): Promise<Pool | null> {

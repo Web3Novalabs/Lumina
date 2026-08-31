@@ -48,6 +48,7 @@ export class CreatePoolDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   category?: string;
 
   @ApiPropertyOptional({
