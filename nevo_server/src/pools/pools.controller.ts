@@ -90,7 +90,7 @@ export class PoolsController {
   })
   @ApiCreatedResponse({ description: 'The created pool.' })
   @Post()
-  create(@Body() dto: CreatePoolDto) {
+  create(@Body(new ValidationPipe({ transform: true, whitelist: true })) dto: CreatePoolDto) {
     return this.poolsService.create(dto);
   }
 

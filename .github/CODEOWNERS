@@ -1,0 +1,14 @@
+# CODEOWNERS for Nevo Repository
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default global code owners
+* @Akshola00
+
+# Frontend application (Next.js)
+/nevo_frontend/ @Akshola00
+
+# Backend API service (NestJS)
+/nevo_server/ @Akshola00
+
+# Soroban Smart Contracts (Rust)
+/nevo_contract/ @Akshola00

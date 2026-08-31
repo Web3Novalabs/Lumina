@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import Navbar from '@/components/Navbar';
+import { Footer } from '@/components/Footer';
 import { ToastContainer } from '@/components/Toast';
 
 // Using system fonts to avoid network fetch during build (CI friendly)
