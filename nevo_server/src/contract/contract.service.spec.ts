@@ -6,6 +6,8 @@ import {
   Networks,
   Keypair,
   nativeToScVal,
+  Account,
+  xdr,
 } from '@stellar/stellar-sdk';
 import { ContractService } from './contract.service.js';
 import { StellarError } from './stellar.error.js';
@@ -45,6 +47,7 @@ describe('ContractService', () => {
         title: 'My Pool',
         description: 'desc',
       });
+
       expect(typeof xdr).toBe('string');
       expect(xdr.length).toBeGreaterThan(0);
       // Must be parseable back into a transaction
@@ -121,6 +124,36 @@ describe('ContractService', () => {
       const donor = Keypair.random().publicKey();
       const result = await service.getContributionOnChain(1, donor);
       expect(result).toBe(0n);
+    });
+
+    it('decodes scvI128 return value correctly', async () => {
+      // Mock RPC getAccount to return a valid Account
+      const mockAccount = new Account(Keypair.random().publicKey(), '0');
+      jest.spyOn(service['rpcServer'], 'getAccount').mockResolvedValue(mockAccount as any);
+
+      // Mock simulateTransaction to return a result with retval
+      const mockResult = {
+        result: {
+          retval: {
+            toXDR: () => Buffer.from([0]),
+          },
+        },
+      };
+      jest.spyOn(service['rpcServer'], 'simulateTransaction').mockResolvedValue(mockResult as any);
+
+      // Mock xdr.ScVal.fromXDR to return an object indicating scvI128 with parts
+      jest.spyOn(xdr.ScVal, 'fromXDR').mockReturnValue({
+        switch: () => ({ name: 'scvI128' }),
+        i128: () => ({
+          hi: () => ({ toString: () => '0' }),
+          lo: () => ({ toString: () => '123' }),
+        }),
+        u128: undefined,
+      } as any);
+
+      const donor = Keypair.random().publicKey();
+      const contribution = await service.getContributionOnChain(1, donor);
+      expect(contribution).toBe(123n);
     });
   });
 

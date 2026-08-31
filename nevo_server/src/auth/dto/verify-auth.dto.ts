@@ -22,7 +22,7 @@ export class VerifyAuthDto {
   /** Hex-encoded Ed25519 signature over `message`. */
   @IsString()
   @IsNotEmpty()
-  @IsHexadecimal({ message: 'signature must be hex-encoded' })
+  @IsHexadecimal()
   signature: string;
 
   /** The nonce previously returned by `GET /auth/challenge`. */
