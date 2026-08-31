@@ -1480,4 +1480,8 @@ impl Contract {
 mod test;
 mod test_issues;
 mod test_register_school;
+mod test_contract_initialization;
+mod test_pool_creation;
+mod test_pool_retrieval;
+mod test_campaign_lifecycle;
 mod test_withdraw;
