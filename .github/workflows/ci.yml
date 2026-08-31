@@ -2,7 +2,11 @@ name: CI
 on: [push, pull_request]
 jobs:
   build:
+    name: Frontend — Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./nevo_frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -25,7 +29,6 @@ jobs:
         run: npm run typecheck
 
       - name: Check for remaining mock data
-        working-directory: ./nevo_frontend
         run: |
           if grep -r "MOCK_" app/ src/store/ \
             --include="*.ts" \
