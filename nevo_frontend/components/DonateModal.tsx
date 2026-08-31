@@ -13,6 +13,7 @@ import { useDonationsStore } from '@/src/store/donationsStore';
 import { contractService } from '@/lib/contract-service';
 import { parseApiError } from '@/lib/errors';
 import type { Pool } from '@/src/store/poolsStore';
+import { CopyButton } from './CopyButton';
 import { WalletAddress } from './WalletAddress';
 
 const NETWORK_PASSPHRASE =
@@ -408,14 +409,24 @@ export function DonateModal({
                 to <span className="font-medium">{pool.title}</span>.
               </p>
               {txHash && (
-                <a
-                  href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-block font-mono text-xs text-brand-600 hover:underline"
-                >
-                  {txHash.slice(0, 10)}…{txHash.slice(-6)}
-                </a>
+                <div className="mt-2 inline-flex items-center gap-2">
+                  <a
+                    href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono text-xs text-brand-600 hover:underline"
+                  >
+                    {txHash.slice(0, 10)}…{txHash.slice(-6)}
+                  </a>
+                  <CopyButton
+                    text={txHash}
+                    label="Copy hash"
+                    copiedLabel="Copied"
+                    iconOnly
+                    aria-label="Copy transaction hash"
+                    className="shrink-0"
+                  />
+                </div>
               )}
             </div>
             <div className="mt-2 flex w-full gap-3">

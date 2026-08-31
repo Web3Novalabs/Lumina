@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useNotificationsStore } from '@/src/store/notificationsStore';
 import { ConfirmDialog } from './ConfirmDialog';
+import { EmptyState } from '@/components/EmptyState';
 
 export function NotificationCenter() {
   const {
@@ -119,9 +120,12 @@ export function NotificationCenter() {
 
           <div className="max-h-80 overflow-y-auto">
             {notifications.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
-                You have no notifications.
-              </div>
+              <EmptyState
+                icon="history"
+                title="No notifications yet"
+                description="You'll see updates about your pools and donations here."
+                variant="compact"
+              />
             ) : (
               <ul className="divide-y divide-[var(--color-border)]">
                 {notifications.map((n) => (
