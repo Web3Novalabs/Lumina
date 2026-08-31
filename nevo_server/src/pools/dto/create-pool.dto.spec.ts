@@ -17,7 +17,7 @@ describe('CreatePoolDto (POST /pools body contract)', () => {
   /** A minimal fully-valid payload that should always pass validation. */
   const validBody = {
     contractPoolId: 'pool-abc-123',
-    creatorWallet: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+    creatorWallet: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCW7M',
     title: 'Clean Water Initiative',
     description: 'Providing clean drinking water to rural communities.',
     goal: '1000000000',
@@ -106,6 +106,15 @@ describe('CreatePoolDto (POST /pools body contract)', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it('rejects a malformed creatorWallet with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/pools')
+      .send({ ...validBody, creatorWallet: 'not-a-stellar-key' })
+      .expect(400);
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('rejects a title that exceeds 100 characters with 400', async () => {
     await request(app.getHttpServer())
       .post('/pools')
@@ -179,5 +188,28 @@ describe('CreatePoolDto (POST /pools body contract)', () => {
       .expect(400);
 
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-URL imageUrl with 400', async () => {
+    await request(app.getHttpServer())
+      .post('/pools')
+      .send({ ...validBody, imageUrl: 'not a url' })
+      .expect(400);
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a valid https imageUrl alongside the required fields', async () => {
+    const body = { ...validBody, imageUrl: 'https://example.com/pool.png' };
+    await request(app.getHttpServer()).post('/pools').send(body).expect(201);
+
+    expect(create).toHaveBeenCalledWith(body);
+  });
+
+  it('accepts a null imageUrl (nullable optional field)', async () => {
+    const body = { ...validBody, imageUrl: null };
+    await request(app.getHttpServer()).post('/pools').send(body).expect(201);
+
+    expect(create).toHaveBeenCalledWith(body);
   });
 });
