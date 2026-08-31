@@ -1,5 +1,5 @@
 import {
-  Body,
+  Body, ValidationPipe,
   Controller,
   ForbiddenException,
   Get,
