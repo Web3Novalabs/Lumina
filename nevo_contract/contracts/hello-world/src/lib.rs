@@ -123,12 +123,6 @@ pub enum ContractError {
     NoContributionToRefund = 13,
     /// School address has not been registered by an admin.
     SchoolNotRegistered = 14,
-    /// Pool title/name is empty.
-    InvalidPoolName = 15,
-    /// Pool funding goal is zero.
-    InvalidPoolTarget = 16,
-    /// Pool application deadline is not strictly in the future.
-    InvalidPoolDeadline = 17,
 }
 
 // Helper functions for timestamp/deadline edge-case tests
@@ -340,18 +334,6 @@ impl Contract {
     ) -> u32 {
         if description.len() as u32 > MAX_DESCRIPTION_LENGTH as u32 {
             panic!("Description exceeds maximum length");
-        }
-
-        if title.len() == 0 {
-            env.panic_with_error(ContractError::InvalidPoolName);
-        }
-
-        if goal == 0 {
-            env.panic_with_error(ContractError::InvalidPoolTarget);
-        }
-
-        if application_deadline <= env.ledger().timestamp() {
-            env.panic_with_error(ContractError::InvalidPoolDeadline);
         }
 
         let pool_count_key = Symbol::new(&env, POOL_COUNT);

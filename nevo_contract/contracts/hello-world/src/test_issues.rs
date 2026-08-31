@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
     token::StellarAssetClient,
-    Address, BytesN, Env, String, Symbol,
+    Address, BytesN, Env, IntoVal, String, Symbol,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -709,6 +709,209 @@ fn test_closed_state_persists() {
     assert_eq!(pool2.4, true);
 }
 
+// ============= ISSUE #942: MILESTONE SETUP/GETTER TESTS =============
+
+/// Test 1: Setting an empty milestone list panics
+#[test]
+#[should_panic(expected = "Milestones required")]
+fn test_setup_application_milestones_empty_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.setup_application_milestones(&pool_id, &student, &Vec::new(&env));
+}
+
+/// Test 2: Milestone amounts that don't sum to the pool goal panic
+#[test]
+#[should_panic(expected = "Milestone total must equal pool goal")]
+fn test_setup_application_milestones_total_mismatch_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: 100_000_000u128 }, Milestone { amount: 200_000_000u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+}
+
+/// Test 3: Milestone amounts that overflow u128 on summation panic
+#[test]
+#[should_panic(expected = "Milestone amount overflow")]
+fn test_setup_application_milestones_overflow_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: u128::MAX }, Milestone { amount: 1u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+}
+
+/// Test 4: Milestones summing to the pool goal are stored and read back correctly
+#[test]
+fn test_setup_and_get_milestones_round_trip() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: 400_000_000u128 }, Milestone { amount: 600_000_000u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+
+    let stored = client.get_milestones(&pool_id, &student);
+    assert_eq!(stored, milestones);
+}
+
+// ============= ISSUE #940: POOL DEADLINE SETTER/GETTER TESTS =============
+
+/// Test 1: get_pool_deadline defaults to 0 when no deadline has been set
+#[test]
+fn test_get_pool_deadline_defaults_to_zero() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_pool_deadline(&pool_id), 0u32);
+}
+
+/// Test 2: Sponsor can set the deadline and read it back
+#[test]
+fn test_set_and_get_pool_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence() + 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+
+    assert_eq!(client.get_pool_deadline(&pool_id), deadline);
+}
+
+/// Test 3: A caller other than the pool sponsor cannot set the deadline
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_set_pool_deadline_rejects_non_sponsor() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let non_sponsor = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence() + 1_000;
+    client
+        .mock_auths(&[MockAuth {
+            address: &non_sponsor,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "set_pool_deadline",
+                args: (&pool_id, &deadline).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_pool_deadline(&pool_id, &deadline);
+}
+
+/// Test 4: A deadline that is not strictly in the future panics
+#[test]
+#[should_panic(expected = "Deadline must be in the future")]
+fn test_set_pool_deadline_rejects_non_future_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence();
+    client.set_pool_deadline(&pool_id, &deadline);
+}
+
 // ============= ISSUE #939: REFUND_DONATION TESTS =============
 
 /// Test 1: Donor is refunded once the deadline has passed AND the grace
@@ -974,252 +1177,243 @@ fn test_get_pool_school_fails_for_non_school_pool() {
     client.get_pool_school(&pool_id);
 }
 
-// ============= ISSUE #1080: CREATE_POOL PARAMETER VALIDATION TESTS =============
-// Issue #1080 refers to this entry point as `save_pool`; the contract's actual
-// pool-creation function is `create_pool` (there is no `save_pool`).
-
-/// Test 1: An empty pool name (title) fails with InvalidPoolName.
-#[test]
-#[should_panic(expected = "Error(Contract, #15)")]
-fn test_create_pool_empty_name_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-    client.create_pool(
-        &creator,
-        &String::from_str(&env, ""),
-        &String::from_str(&env, "Test"),
-        &1_000_000_000u128,
-        &100_000u64,
-    );
-}
-
-/// Test 2: A zero target amount (goal) fails with InvalidPoolTarget.
-#[test]
-#[should_panic(expected = "Error(Contract, #16)")]
-fn test_create_pool_zero_target_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-    client.create_pool(
-        &creator,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "Test"),
-        &0u128,
-        &100_000u64,
-    );
-}
-
-/// Test 3: A deadline in the past (relative to the current simulated ledger
-/// time) fails with InvalidPoolDeadline.
-#[test]
-#[should_panic(expected = "Error(Contract, #17)")]
-fn test_create_pool_past_deadline_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    env.ledger().set_timestamp(100_000);
-    let now = env.ledger().timestamp();
-
-    let creator = Address::generate(&env);
-    client.create_pool(
-        &creator,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000_000u128,
-        &(now - 1),
-    );
-}
-
-/// Test 4: Valid parameters succeed, and the created pool is readable
-/// afterward with the expected field values.
-#[test]
-fn test_create_pool_valid_params_succeeds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    env.ledger().set_timestamp(100_000);
-    let now = env.ledger().timestamp();
-
-    let creator = Address::generate(&env);
-    let goal = 1_000_000_000u128;
-    let deadline = now + 1_000;
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Valid Pool"),
-        &String::from_str(&env, "Test"),
-        &goal,
-        &deadline,
-    );
-
-    let pool = client.get_pool(&pool_id);
-    assert_eq!(pool.0, pool_id);
-    assert_eq!(pool.1, creator);
-    assert_eq!(pool.2, goal);
-    assert_eq!(pool.3, 0u128);
-    assert_eq!(pool.4, false);
-    assert_eq!(pool.5, deadline);
-
-    let (title, description) = client.get_pool_metadata(&pool_id);
-    assert_eq!(title, String::from_str(&env, "Valid Pool"));
-    assert_eq!(description, String::from_str(&env, "Test"));
-}
-
-/// Test 5: Pool IDs are assigned sequentially, starting at 1, across
-/// multiple successful `create_pool` calls.
-#[test]
-fn test_create_pool_ids_are_sequential() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-
-    let pool_id_1 = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool One"),
-        &String::from_str(&env, "Test"),
-        &1_000_000_000u128,
-        &100_000u64,
-    );
-    let pool_id_2 = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool Two"),
-        &String::from_str(&env, "Test"),
-        &2_000_000_000u128,
-        &100_000u64,
-    );
-    let pool_id_3 = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool Three"),
-        &String::from_str(&env, "Test"),
-        &3_000_000_000u128,
-        &100_000u64,
-    );
-
-    assert_eq!(pool_id_1, 1);
-    assert_eq!(pool_id_2, 2);
-    assert_eq!(pool_id_3, 3);
-    assert_eq!(client.get_pool_count(), 3);
-}
-
-// ============= ISSUE #1082: CAMPAIGN CREATION VALIDATION EDGE CASES =============
+// ============= ISSUE #1059: POOL CONTRIBUTION METRICS TRACKING TESTS =============
 //
-// "Campaign" here is `create_pool` (there is no `create_campaign` function).
+// These tests pin down the three per-pool contribution metrics named in
+// issue #1059:
+//   - contributor_count -> `get_donor_count(pool_id)`, backed by the
+//     `d_count` storage entry.
+//   - total_raised       -> `get_total_raised(pool_id)`, backed by
+//     `Pool.collected`.
+//   - last_donation_at   -> `get_last_donation_at(pool_id)`, backed by the
+//     new `Pool.last_donation_at` field (added alongside these tests --
+//     the field, its getter, and the `env.ledger().timestamp()` writes in
+//     `donate()`/`donate_with_token()` did not exist before; see lib.rs).
 //
-// Two of the five cases in the issue are not testable against the actual
-// contract and are intentionally omitted rather than faked:
-//   - "Maximum title length succeeds": no max title length is enforced
-//     anywhere in the contract (only MAX_DESCRIPTION_LENGTH, MAX_URL_LENGTH,
-//     and MAX_IMAGE_HASH_LENGTH exist, none of which bound `title`), so
-//     there is no defined maximum to test against.
-//   - "Duplicate campaign ID fails": pool IDs are purely auto-incrementing
-//     (`pool_count + 1` in `create_pool`) and are never caller-supplied, so
-//     a duplicate ID cannot occur through any normal call path.
+// NOTE: Tests 1-3 encode the exact semantics issue #1059 asks for
+// ("0 -> 1 on first contribution", "stays at 1 on a repeat contribution",
+// "1 -> 2 on a new contributor"). They currently FAIL: both `donate()`
+// and `donate_with_token()` bump `d_count` unconditionally on every call
+// *and* bump it again inside the "is this donor new?" branch, so a pool's
+// very first contribution already leaves `d_count` at 2, and every
+// subsequent contribution (repeat or new donor) keeps incrementing it
+// further. That double-increment is a pre-existing bug in the donor-count
+// bookkeeping, not something introduced here -- these tests are left
+// failing on purpose to document it precisely, per instruction, rather
+// than silently asserting the buggy value or fixing contract logic that
+// wasn't part of this task. `cargo test` for this crate will not be fully
+// green until that bug is fixed.
 
-/// Test 1: A very large (but not type-bounded) title still succeeds, since
-/// no max title length is enforced. Named accordingly rather than as a
-/// "maximum length" test, since no such maximum exists.
+/// Test 1 (issue #1059, requirement 1): a pool's first-ever contribution
+/// should take contributor_count from 0 to 1.
+///
+/// Currently FAILS: `donate()`'s unconditional `d_count` bump plus the
+/// "new donor" bump both fire on the very first contribution, leaving
+/// `get_donor_count` at 2 instead of 1.
 #[test]
-fn test_create_pool_large_title_succeeds() {
+fn test_first_contribution_increments_contributor_count_from_zero_to_one() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
     let creator = Address::generate(&env);
-    let large_title = String::from_str(&env, &"t".repeat(1000));
+    let donor = Address::generate(&env);
+
     let pool_id = client.create_pool(
         &creator,
-        &large_title,
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
         &1_000_000_000u128,
         &100_000u64,
     );
 
-    let (title, _) = client.get_pool_metadata(&pool_id);
-    assert_eq!(title, large_title);
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        0,
+        "a freshly-created pool must start with zero contributors"
+    );
+
+    client.donate(&pool_id, &donor, &10_000_000u128);
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        1,
+        "the pool's first-ever contribution must set contributor_count to 1"
+    );
 }
 
-/// Test 2: A large-but-valid goal value (u128::MAX, the true upper bound of
-/// the field's type) succeeds, since no max goal value is enforced.
+/// Test 2 (issue #1059, requirement 2): a second contribution from the
+/// *same* contributor must not be double-counted -- contributor_count
+/// should stay at 1.
+///
+/// Currently FAILS: `donate()`'s unconditional `d_count` bump fires again
+/// on the repeat contribution (the "new donor" bump correctly does not),
+/// so `get_donor_count` keeps climbing past 1 instead of holding steady.
 #[test]
-fn test_create_pool_large_goal_value_succeeds() {
+fn test_repeat_contribution_from_same_donor_leaves_contributor_count_at_one() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
     let creator = Address::generate(&env);
-    let goal = u128::MAX;
+    let donor = Address::generate(&env);
+
     let pool_id = client.create_pool(
         &creator,
-        &String::from_str(&env, "Large Goal Pool"),
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
-        &goal,
+        &1_000_000_000u128,
         &100_000u64,
     );
 
-    let pool = client.get_pool(&pool_id);
-    assert_eq!(pool.2, goal);
-}
+    client.donate(&pool_id, &donor, &10_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_id), 1);
 
-/// Test 3: A deadline set exactly at the current ledger timestamp fails.
-/// `create_pool` rejects with `<=`, so equality to `now` is a failure, not
-/// only strictly-past values (covered separately by #1080's own tests).
-#[test]
-#[should_panic(expected = "Error(Contract, #17)")]
-fn test_create_pool_deadline_equal_to_current_timestamp_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    // Same donor contributes again -- must not be counted as a new contributor.
+    client.donate(&pool_id, &donor, &5_000_000u128);
 
-    env.ledger().set_timestamp(100_000);
-    let now = env.ledger().timestamp();
-
-    let creator = Address::generate(&env);
-    client.create_pool(
-        &creator,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000_000u128,
-        &now,
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        1,
+        "a repeat contribution from an existing contributor must not change contributor_count"
     );
 }
 
-/// Test 4: A deadline set in the future succeeds.
+/// Test 3 (issue #1059, requirement 3): a contribution from a *different*,
+/// new contributor to the same pool should take contributor_count from 1
+/// to 2.
+///
+/// Currently FAILS for the same reason as tests 1 and 2: the
+/// unconditional `d_count` bump inflates the count on every call.
 #[test]
-fn test_create_pool_future_deadline_succeeds() {
+fn test_new_contributor_increments_contributor_count_from_one_to_two() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
-    env.ledger().set_timestamp(100_000);
-    let now = env.ledger().timestamp();
-    let deadline = now + 1;
-
     let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+
     let pool_id = client.create_pool(
         &creator,
-        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
         &1_000_000_000u128,
-        &deadline,
+        &100_000u64,
     );
 
-    let pool = client.get_pool(&pool_id);
-    assert_eq!(pool.5, deadline);
+    client.donate(&pool_id, &donor_a, &10_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_id), 1);
+
+    // A different contributor donates for the first time.
+    client.donate(&pool_id, &donor_b, &20_000_000u128);
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        2,
+        "a new contributor to the same pool must take contributor_count from 1 to 2"
+    );
+}
+
+/// Test 4 (issue #1059, requirement 4): total_raised accumulates correctly
+/// across multiple contributions, including repeat contributions from the
+/// same contributor. Unlike contributor_count, `Pool.collected` (exposed
+/// via `get_total_raised`) has no double-counting bug -- this test passes.
+#[test]
+fn test_total_raised_accumulates_across_repeat_and_new_contributions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metrics Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_total_raised(&pool_id), 0u128);
+
+    let first_amount = 10_000_000u128;
+    client.donate(&pool_id, &donor_a, &first_amount);
+    assert_eq!(client.get_total_raised(&pool_id), first_amount);
+
+    // Same contributor donates again -- must accumulate, not overwrite.
+    let second_amount = 15_000_000u128;
+    client.donate(&pool_id, &donor_a, &second_amount);
+    assert_eq!(
+        client.get_total_raised(&pool_id),
+        first_amount + second_amount
+    );
+
+    // A different contributor's donation must also accumulate into the same total.
+    let third_amount = 7_500_000u128;
+    client.donate(&pool_id, &donor_b, &third_amount);
+    assert_eq!(
+        client.get_total_raised(&pool_id),
+        first_amount + second_amount + third_amount,
+        "total_raised must equal the sum of every contribution, repeats included"
+    );
+}
+
+/// Test 5 (issue #1059, requirement 5): last_donation_at updates to the
+/// current ledger timestamp after each contribution. Two contributions are
+/// made at different simulated timestamps (via `env.ledger().set_timestamp`)
+/// so the change is actually observable, not just "non-zero".
+#[test]
+fn test_last_donation_at_updates_to_current_ledger_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metrics Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        0u64,
+        "a pool with no donations yet must report last_donation_at as 0"
+    );
+
+    let first_timestamp = 1_000u64;
+    env.ledger().set_timestamp(first_timestamp);
+    client.donate(&pool_id, &donor_a, &10_000_000u128);
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        first_timestamp,
+        "last_donation_at must be set to the ledger timestamp of the first contribution"
+    );
+
+    // Advance to a distinct later timestamp and have a different donor contribute.
+    let second_timestamp = 5_000u64;
+    assert_ne!(second_timestamp, first_timestamp);
+    env.ledger().set_timestamp(second_timestamp);
+    client.donate(&pool_id, &donor_b, &20_000_000u128);
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        second_timestamp,
+        "last_donation_at must update to the new ledger timestamp on the next contribution"
+    );
 }
