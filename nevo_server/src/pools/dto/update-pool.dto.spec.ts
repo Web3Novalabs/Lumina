@@ -6,8 +6,10 @@ import { PoolsController } from '../pools.controller';
 import { PoolsService } from '../pools.service';
 
 /**
- * Pins down PATCH /pools/:id body validation under the global ValidationPipe:
- * omitted description/category remain valid, but empty strings are rejected.
+ * Pins down the PATCH /pools/:id body contract as it behaves under the global
+ * ValidationPipe: how imageUrl is validated and that unknown fields are
+ * forbidden. Also verifies that omitted description/category remain valid,
+ * but empty strings are rejected.
  */
 describe('UpdatePoolDto (PATCH /pools/:id body contract)', () => {
   let app: INestApplication;
@@ -21,7 +23,18 @@ describe('UpdatePoolDto (PATCH /pools/:id body contract)', () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [PoolsController],
       providers: [
-        { provide: PoolsService, useValue: { updateMeta } },
+        {
+          provide: PoolsService,
+          useValue: {
+            create: jest.fn(),
+            findAll: jest.fn(),
+            findOneMerged: jest.fn(),
+            updateMeta,
+            findByContractId: jest.fn(),
+            buildWithdrawTx: jest.fn(),
+            buildClosePoolTx: jest.fn(),
+          },
+        },
         { provide: ContractService, useValue: {} },
       ],
     }).compile();
@@ -42,6 +55,39 @@ describe('UpdatePoolDto (PATCH /pools/:id body contract)', () => {
     await app.close();
     jest.clearAllMocks();
   });
+
+  // ─── imageUrl validation tests (from feature/issue-1140) ───
+
+  it('accepts a valid imageUrl and reaches the service', async () => {
+    await request(app.getHttpServer())
+      .patch('/pools/pool-1')
+      .send({ imageUrl: 'https://example.com/image.png' })
+      .expect(200);
+
+    expect(updateMeta).toHaveBeenCalledWith('pool-1', {
+      imageUrl: 'https://example.com/image.png',
+    });
+  });
+
+  it('rejects a non-URL imageUrl with 400', async () => {
+    await request(app.getHttpServer())
+      .patch('/pools/pool-1')
+      .send({ imageUrl: 'not a url' })
+      .expect(400);
+
+    expect(updateMeta).not.toHaveBeenCalled();
+  });
+
+  it('accepts a null imageUrl (nullable optional field)', async () => {
+    await request(app.getHttpServer())
+      .patch('/pools/pool-1')
+      .send({ imageUrl: null })
+      .expect(200);
+
+    expect(updateMeta).toHaveBeenCalledWith('pool-1', { imageUrl: null });
+  });
+
+  // ─── description and category validation tests (from main) ───
 
   it('rejects an empty description with 400', async () => {
     await request(app.getHttpServer())

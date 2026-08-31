@@ -4,6 +4,7 @@ import {
   IsNumberString,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   MaxLength,
 } from 'class-validator';
@@ -42,13 +43,19 @@ export class CreatePoolDto {
   @IsNumberString()
   goal: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'Category of the pool (e.g., Education, Healthcare, etc.)',
+  })
   @IsOptional()
   @IsString()
   category?: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    description: 'URL to the pool\'s image',
+    nullable: true,
+  })
   @IsOptional()
   @IsString()
+  @IsUrl()
   imageUrl?: string | null;
 }
