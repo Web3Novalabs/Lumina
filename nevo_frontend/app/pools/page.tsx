@@ -10,6 +10,7 @@ import {
   type Pool,
   type PoolStatus,
 } from '@/src/store/poolsStore';
+import { getDonorCount } from '@/lib/getDonorCount';
 
 type SortOption = 'newest' | 'most-funded' | 'close-to-goal' | 'trending';
 
@@ -84,13 +85,6 @@ const CATEGORY_STYLES: Record<string, { inactive: string; active: string }> = {
     active: 'border-fuchsia-500 bg-fuchsia-100 text-fuchsia-800',
   },
 };
-
-function getDonorCount(pool: Pool): number {
-  if (pool.id === '1') return 42;
-  if (pool.id === '2') return 87;
-  if (pool.id === '3') return 31;
-  return Math.floor((pool.raised * 7.3) / 100) + 1;
-}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);

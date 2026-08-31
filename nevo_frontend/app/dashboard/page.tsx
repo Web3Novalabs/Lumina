@@ -1,13 +1,68 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { signTransaction } from '@stellar/freighter-api';
 import { useWalletStore } from '@/src/store/walletStore';
 import { EmptyState } from '@/components/EmptyState';
+import ConnectWallet from '@/components/ConnectWallet';
 import { WalletAddress } from '@/components/WalletAddress';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import { apiClient } from '@/lib/api-client';
+import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
+import {
+  apiClient,
+  submitSignedXdr,
+  withdrawPool,
+  closePool,
+} from '@/lib/api-client';
+
+// TODO: Replace with real API call once backend pool endpoints are implemented
+const MOCK_CREATOR_POOLS: Pool[] = [
+  {
+    id: '1',
+    title: 'Clean Water Initiative',
+    description: 'Providing clean drinking water to rural communities in need.',
+    category: 'Humanitarian',
+    status: 'Active',
+    target: 10000,
+    raised: 6800,
+    imageColor: '#27926e',
+    creator: 'GABCDE1234567890ABCDE1234567890ABCDE1234567890ABCDE1234567890',
+    createdAt: '2025-03-01',
+  },
+  {
+    id: '2',
+    title: 'Open Source Dev Fund',
+    description: 'Supporting open source contributors building on Stellar.',
+    category: 'Technology',
+    status: 'Active',
+    target: 5000,
+    raised: 5000,
+    imageColor: '#1c7459',
+    creator: 'GABCDE1234567890ABCDE1234567890ABCDE1234567890ABCDE1234567890',
+    createdAt: '2025-01-15',
+  },
+  {
+    id: '3',
+    title: 'Community Garden Project',
+    description: 'Building urban gardens to improve food security locally.',
+    category: 'Environment',
+    status: 'Completed',
+    target: 3000,
+    raised: 3200,
+    imageColor: '#47ae88',
+    creator: 'GABCDE1234567890ABCDE1234567890ABCDE1234567890ABCDE1234567890',
+    createdAt: '2024-11-10',
+  },
+];
+
+// TODO: Replace with real contributor counts from backend
+const MOCK_CONTRIBUTOR_COUNTS: Record<string, number> = {
+  '1': 42,
+  '2': 87,
+  '3': 31,
+};
 
 type ActionModal =
   | { type: 'withdraw'; pool: Pool }
@@ -18,8 +73,23 @@ function DashboardPageContent() {
   const { publicKey, loading, initialize } = useWalletStore();
   const [pools, setPools] = useState<Pool[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
+  const [confirming, setConfirming] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const loadPools = useCallback(async () => {
+    if (!publicKey) return;
+    setLoadingPools(true);
+    try {
+      const data = await apiClient.get<Pool[]>(`/pools?creator=${publicKey}`);
+      setPools(data ?? []);
+    } catch {
+      setPools([]);
+    } finally {
+      setLoadingPools(false);
+    }
+  }, [publicKey]);
 
   useEffect(() => {
     initialize();
@@ -27,16 +97,30 @@ function DashboardPageContent() {
 
   useEffect(() => {
     if (!publicKey) return;
-    apiClient
-      .get<Pool[]>(`/pools?creator=${publicKey}`)
-      .then((data) => setPools(data ?? []))
-      .catch(() => setPools([]))
-      .finally(() => setLoadingPools(false));
+    // TODO: Replace with real fetch filtered by creator === publicKey
+    const timer = setTimeout(() => {
+      try {
+        setPools(MOCK_CREATOR_POOLS);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load pools';
+        console.error('Failed to load pools:', err);
+        setError(message);
+        toast(message, 'error');
+      } finally {
+        setLoadingPools(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
   }, [publicKey]);
 
   // ── Summary metrics ────────────────────────────────────────────────────
   const totalRaised = pools.reduce((s, p) => s + p.raised, 0);
   const activePools = pools.filter((p) => p.status === 'Active').length;
+  const totalContributors = Object.values(MOCK_CONTRIBUTOR_COUNTS).reduce(
+    (s, n) => s + n,
+    0
+  );
 
   // ── Bulk selection helpers ─────────────────────────────────────────────
   const allSelected = pools.length > 0 && selectedIds.size === pools.length;
@@ -91,6 +175,7 @@ function DashboardPageContent() {
             label: 'Total Raised',
             value: `${totalRaised.toLocaleString()} XLM`,
           },
+          { label: 'Contributors', value: totalContributors },
         ].map(({ label, value }) => (
           <div
             key={label}
@@ -122,10 +207,7 @@ function DashboardPageContent() {
           <button
             className="rounded-lg border border-[var(--color-border)] px-3 py-1 hover:bg-[var(--color-border)] transition-colors"
             aria-label="Archive selected pools"
-            onClick={() => {
-              // TODO: bulk archive action
-              setSelectedIds(new Set());
-            }}
+            onClick={archiveSelectedPools}
           >
             Archive selected
           </button>
@@ -135,12 +217,20 @@ function DashboardPageContent() {
       {/* ── Pool list ───────────────────────────────────────────────────── */}
       {loading || loadingPools ? (
         <PoolListSkeleton />
+      ) : error ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+        >
+          <p className="font-medium">Failed to load pools</p>
+          <p className="mt-1">{error}</p>
+        </div>
       ) : pools.length === 0 ? (
         <EmptyState
           icon="pool"
-          title="You haven't created any pools yet"
+          title="No pools yet"
           description="Create your first pool to start raising funds on-chain."
-          action={{ label: 'Create Pool', href: '/pools/new' }}
+          action={{ label: 'Create a Pool', href: '/pools/new' }}
           steps={[
             { text: 'Set a title, goal, and category for your cause' },
             { text: 'Share your pool link with supporters' },
@@ -169,6 +259,7 @@ function DashboardPageContent() {
               <PoolRow
                 key={pool.id}
                 pool={pool}
+                contributors={MOCK_CONTRIBUTOR_COUNTS[pool.id] ?? 0}
                 selected={selectedIds.has(pool.id)}
                 onToggle={() => toggleOne(pool.id)}
                 onWithdraw={() => setActionModal({ type: 'withdraw', pool })}
@@ -184,9 +275,47 @@ function DashboardPageContent() {
         <ConfirmModal
           modal={actionModal}
           onClose={() => setActionModal(null)}
-          onConfirm={() => {
-            // TODO: wire to real withdraw / archive contract calls
-            setActionModal(null);
+          onConfirm={async () => {
+            if (!actionModal) return;
+
+            try {
+              if (actionModal.type === 'withdraw') {
+                const { unsignedXdr } = await withdrawPool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Withdrawal successful');
+              } else {
+                const { unsignedXdr } = await closePool(actionModal.pool.id);
+                const signedResult = await signTransaction(unsignedXdr, {
+                  networkPassphrase:
+                    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+                    'Test SDF Network ; September 2015',
+                });
+
+                if (signedResult.error) {
+                  throw new Error(signedResult.error);
+                }
+
+                await submitSignedXdr(signedResult.signedTxXdr);
+                toast('Pool archived successfully');
+              }
+            } catch (err: unknown) {
+              const error = err as Error;
+              toast(error.message || 'Failed to complete action', 'error');
+              console.error(error);
+            } finally {
+              setActionModal(null);
+              void loadPools();
+            }
           }}
         />
       )}
@@ -198,6 +327,7 @@ function DashboardPageContent() {
 
 interface PoolRowProps {
   pool: Pool;
+  contributors: number;
   selected: boolean;
   onToggle: () => void;
   onWithdraw: () => void;
@@ -206,6 +336,7 @@ interface PoolRowProps {
 
 function PoolRow({
   pool,
+  contributors,
   selected,
   onToggle,
   onWithdraw,
@@ -268,6 +399,7 @@ function PoolRow({
 
             {/* Meta row */}
             <div className="mt-2 flex flex-wrap gap-3 text-xs text-[var(--color-text-muted)]">
+              <span>{contributors} contributors</span>
               <span>{pool.category}</span>
               {pool.createdAt && <span>Created {pool.createdAt}</span>}
             </div>
@@ -328,70 +460,18 @@ function StatusBadge({ status }: { status: Pool['status'] }) {
 
 /* ── ConfirmModal ─────────────────────────────────────────────────────────── */
 
-const FOCUSABLE =
-  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-
 function ConfirmModal({
   modal,
   onClose,
   onConfirm,
+  confirming,
 }: {
   modal: NonNullable<ActionModal>;
   onClose: () => void;
   onConfirm: () => void;
+  confirming: boolean;
 }) {
   const isWithdraw = modal.type === 'withdraw';
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLElement | null>(null);
-
-  const handleKeyDown = useCallback(
-    (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-
-      if (e.key !== 'Tab' || !dialogRef.current) return;
-
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    },
-    [onClose]
-  );
-
-  useEffect(() => {
-    triggerRef.current = document.activeElement as HTMLElement | null;
-
-    const id = requestAnimationFrame(() => {
-      const el = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE);
-      el?.focus();
-    });
-
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      cancelAnimationFrame(id);
-      document.removeEventListener('keydown', handleKeyDown);
-      triggerRef.current?.focus();
-    };
-  }, [handleKeyDown]);
 
   return (
     <div
@@ -407,10 +487,7 @@ function ConfirmModal({
         aria-hidden="true"
       />
 
-      <div
-        ref={dialogRef}
-        className="relative w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
-      >
+      <div className="relative w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
         <h2 id="modal-title" className="text-base font-semibold">
           {isWithdraw ? 'Withdraw funds' : 'Archive pool'}
         </h2>
@@ -422,15 +499,21 @@ function ConfirmModal({
         <div className="mt-5 flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+            disabled={confirming}
+            className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm hover:bg-[var(--color-surface-raised)] transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
+            disabled={confirming}
+            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60 disabled:cursor-not-allowed ${isWithdraw ? 'bg-brand-600 hover:bg-brand-700 focus-visible:outline-brand-600' : 'bg-error hover:bg-error-dark focus-visible:outline-error'}`}
           >
-            {isWithdraw ? 'Confirm Withdraw' : 'Archive'}
+            {confirming
+              ? 'Processing…'
+              : isWithdraw
+                ? 'Confirm Withdraw'
+                : 'Archive'}
           </button>
         </div>
       </div>
