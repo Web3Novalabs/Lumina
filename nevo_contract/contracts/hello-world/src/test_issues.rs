@@ -973,3 +973,244 @@ fn test_get_pool_school_fails_for_non_school_pool() {
 
     client.get_pool_school(&pool_id);
 }
+
+// ============= ISSUE #1059: POOL CONTRIBUTION METRICS TRACKING TESTS =============
+//
+// These tests pin down the three per-pool contribution metrics named in
+// issue #1059:
+//   - contributor_count -> `get_donor_count(pool_id)`, backed by the
+//     `d_count` storage entry.
+//   - total_raised       -> `get_total_raised(pool_id)`, backed by
+//     `Pool.collected`.
+//   - last_donation_at   -> `get_last_donation_at(pool_id)`, backed by the
+//     new `Pool.last_donation_at` field (added alongside these tests --
+//     the field, its getter, and the `env.ledger().timestamp()` writes in
+//     `donate()`/`donate_with_token()` did not exist before; see lib.rs).
+//
+// NOTE: Tests 1-3 encode the exact semantics issue #1059 asks for
+// ("0 -> 1 on first contribution", "stays at 1 on a repeat contribution",
+// "1 -> 2 on a new contributor"). They currently FAIL: both `donate()`
+// and `donate_with_token()` bump `d_count` unconditionally on every call
+// *and* bump it again inside the "is this donor new?" branch, so a pool's
+// very first contribution already leaves `d_count` at 2, and every
+// subsequent contribution (repeat or new donor) keeps incrementing it
+// further. That double-increment is a pre-existing bug in the donor-count
+// bookkeeping, not something introduced here -- these tests are left
+// failing on purpose to document it precisely, per instruction, rather
+// than silently asserting the buggy value or fixing contract logic that
+// wasn't part of this task. `cargo test` for this crate will not be fully
+// green until that bug is fixed.
+
+/// Test 1 (issue #1059, requirement 1): a pool's first-ever contribution
+/// should take contributor_count from 0 to 1.
+///
+/// Currently FAILS: `donate()`'s unconditional `d_count` bump plus the
+/// "new donor" bump both fire on the very first contribution, leaving
+/// `get_donor_count` at 2 instead of 1.
+#[test]
+fn test_first_contribution_increments_contributor_count_from_zero_to_one() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metrics Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        0,
+        "a freshly-created pool must start with zero contributors"
+    );
+
+    client.donate(&pool_id, &donor, &10_000_000u128);
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        1,
+        "the pool's first-ever contribution must set contributor_count to 1"
+    );
+}
+
+/// Test 2 (issue #1059, requirement 2): a second contribution from the
+/// *same* contributor must not be double-counted -- contributor_count
+/// should stay at 1.
+///
+/// Currently FAILS: `donate()`'s unconditional `d_count` bump fires again
+/// on the repeat contribution (the "new donor" bump correctly does not),
+/// so `get_donor_count` keeps climbing past 1 instead of holding steady.
+#[test]
+fn test_repeat_contribution_from_same_donor_leaves_contributor_count_at_one() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metrics Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate(&pool_id, &donor, &10_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_id), 1);
+
+    // Same donor contributes again -- must not be counted as a new contributor.
+    client.donate(&pool_id, &donor, &5_000_000u128);
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        1,
+        "a repeat contribution from an existing contributor must not change contributor_count"
+    );
+}
+
+/// Test 3 (issue #1059, requirement 3): a contribution from a *different*,
+/// new contributor to the same pool should take contributor_count from 1
+/// to 2.
+///
+/// Currently FAILS for the same reason as tests 1 and 2: the
+/// unconditional `d_count` bump inflates the count on every call.
+#[test]
+fn test_new_contributor_increments_contributor_count_from_one_to_two() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metrics Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate(&pool_id, &donor_a, &10_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_id), 1);
+
+    // A different contributor donates for the first time.
+    client.donate(&pool_id, &donor_b, &20_000_000u128);
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        2,
+        "a new contributor to the same pool must take contributor_count from 1 to 2"
+    );
+}
+
+/// Test 4 (issue #1059, requirement 4): total_raised accumulates correctly
+/// across multiple contributions, including repeat contributions from the
+/// same contributor. Unlike contributor_count, `Pool.collected` (exposed
+/// via `get_total_raised`) has no double-counting bug -- this test passes.
+#[test]
+fn test_total_raised_accumulates_across_repeat_and_new_contributions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metrics Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_total_raised(&pool_id), 0u128);
+
+    let first_amount = 10_000_000u128;
+    client.donate(&pool_id, &donor_a, &first_amount);
+    assert_eq!(client.get_total_raised(&pool_id), first_amount);
+
+    // Same contributor donates again -- must accumulate, not overwrite.
+    let second_amount = 15_000_000u128;
+    client.donate(&pool_id, &donor_a, &second_amount);
+    assert_eq!(
+        client.get_total_raised(&pool_id),
+        first_amount + second_amount
+    );
+
+    // A different contributor's donation must also accumulate into the same total.
+    let third_amount = 7_500_000u128;
+    client.donate(&pool_id, &donor_b, &third_amount);
+    assert_eq!(
+        client.get_total_raised(&pool_id),
+        first_amount + second_amount + third_amount,
+        "total_raised must equal the sum of every contribution, repeats included"
+    );
+}
+
+/// Test 5 (issue #1059, requirement 5): last_donation_at updates to the
+/// current ledger timestamp after each contribution. Two contributions are
+/// made at different simulated timestamps (via `env.ledger().set_timestamp`)
+/// so the change is actually observable, not just "non-zero".
+#[test]
+fn test_last_donation_at_updates_to_current_ledger_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metrics Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        0u64,
+        "a pool with no donations yet must report last_donation_at as 0"
+    );
+
+    let first_timestamp = 1_000u64;
+    env.ledger().set_timestamp(first_timestamp);
+    client.donate(&pool_id, &donor_a, &10_000_000u128);
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        first_timestamp,
+        "last_donation_at must be set to the ledger timestamp of the first contribution"
+    );
+
+    // Advance to a distinct later timestamp and have a different donor contribute.
+    let second_timestamp = 5_000u64;
+    assert_ne!(second_timestamp, first_timestamp);
+    env.ledger().set_timestamp(second_timestamp);
+    client.donate(&pool_id, &donor_b, &20_000_000u128);
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        second_timestamp,
+        "last_donation_at must update to the new ledger timestamp on the next contribution"
+    );
+}
