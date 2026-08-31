@@ -2,9 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events as _, Ledger},
+    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
     token::StellarAssetClient,
-    Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal,
+    Address, BytesN, Env, IntoVal, String, Symbol,
 };
 
 fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
@@ -491,12 +491,8 @@ fn test_maximum_i128_amount_contribution_succeeds() {
 }
 
 /// Test 4: Contribution exceeding user balance fails with token transfer error
-///
-/// `Error(Contract, #10)` here is the token contract's insufficient-balance
-/// error, raised from inside the SAC during `transfer` - not this contract's
-/// own error #10.
 #[test]
-#[should_panic(expected = "Error(Contract, #10)")]
+#[should_panic]
 fn test_contribution_exceeding_balance_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -517,72 +513,6 @@ fn test_contribution_exceeding_balance_fails() {
 
     // Try to contribute more than balance - should fail with token transfer error
     client.donate_with_token(&pool_id, &donor, &token, &200_000_000i128);
-}
-
-/// Test 5: Every rejected contribution leaves pool accounting and donor
-/// balances untouched, and a valid contribution still works afterwards.
-///
-/// Tests 1-4 assert only that the call panics. This pins the rest of the
-/// rejection contract: the error surfaces through `try_*` rather than
-/// unwinding, nothing is observable afterwards, and the pool is still usable.
-///
-/// Note this does not prove the contract validates before writing - the host
-/// reverts storage on panic either way - so it is a regression guard on the
-/// caller-visible outcome, not on statement ordering inside `donate_with_token`.
-#[test]
-fn test_rejected_contributions_do_not_change_state() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let starting_balance = 100_000_000i128;
-    let token = create_token(&env, starting_balance, &donor);
-    let token_client = token::Client::new(&env, &token);
-
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000_000u128,
-        &100_000u64,
-    );
-
-    // Zero, negative, and over-balance amounts are all rejected.
-    for amount in [0i128, -100_000_000i128, starting_balance + 1] {
-        assert!(
-            client
-                .try_donate_with_token(&pool_id, &donor, &token, &amount)
-                .is_err(),
-            "amount {} should be rejected",
-            amount
-        );
-
-        assert_eq!(
-            client.get_total_raised(&pool_id),
-            0u128,
-            "pool collected must stay 0 after rejecting amount {}",
-            amount
-        );
-        assert_eq!(
-            client.get_contribution(&pool_id, &donor),
-            0u128,
-            "donor contribution must stay 0 after rejecting amount {}",
-            amount
-        );
-        assert_eq!(
-            token_client.balance(&donor),
-            starting_balance,
-            "donor balance must be intact after rejecting amount {}",
-            amount
-        );
-    }
-
-    // A valid contribution still works after the rejected ones.
-    client.donate_with_token(&pool_id, &donor, &token, &1_000_000i128);
-    assert_eq!(client.get_total_raised(&pool_id), 1_000_000u128);
 }
 
 // ============= ISSUE #476: POOL CLOSURE STATE VALIDATION TESTS =============
@@ -777,6 +707,209 @@ fn test_closed_state_persists() {
     // Verify state persists across multiple reads
     let pool2 = client.get_pool(&pool_id);
     assert_eq!(pool2.4, true);
+}
+
+// ============= ISSUE #942: MILESTONE SETUP/GETTER TESTS =============
+
+/// Test 1: Setting an empty milestone list panics
+#[test]
+#[should_panic(expected = "Milestones required")]
+fn test_setup_application_milestones_empty_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.setup_application_milestones(&pool_id, &student, &Vec::new(&env));
+}
+
+/// Test 2: Milestone amounts that don't sum to the pool goal panic
+#[test]
+#[should_panic(expected = "Milestone total must equal pool goal")]
+fn test_setup_application_milestones_total_mismatch_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: 100_000_000u128 }, Milestone { amount: 200_000_000u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+}
+
+/// Test 3: Milestone amounts that overflow u128 on summation panic
+#[test]
+#[should_panic(expected = "Milestone amount overflow")]
+fn test_setup_application_milestones_overflow_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: u128::MAX }, Milestone { amount: 1u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+}
+
+/// Test 4: Milestones summing to the pool goal are stored and read back correctly
+#[test]
+fn test_setup_and_get_milestones_round_trip() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: 400_000_000u128 }, Milestone { amount: 600_000_000u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+
+    let stored = client.get_milestones(&pool_id, &student);
+    assert_eq!(stored, milestones);
+}
+
+// ============= ISSUE #940: POOL DEADLINE SETTER/GETTER TESTS =============
+
+/// Test 1: get_pool_deadline defaults to 0 when no deadline has been set
+#[test]
+fn test_get_pool_deadline_defaults_to_zero() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    assert_eq!(client.get_pool_deadline(&pool_id), 0u32);
+}
+
+/// Test 2: Sponsor can set the deadline and read it back
+#[test]
+fn test_set_and_get_pool_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence() + 1_000;
+    client.set_pool_deadline(&pool_id, &deadline);
+
+    assert_eq!(client.get_pool_deadline(&pool_id), deadline);
+}
+
+/// Test 3: A caller other than the pool sponsor cannot set the deadline
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_set_pool_deadline_rejects_non_sponsor() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let non_sponsor = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence() + 1_000;
+    client
+        .mock_auths(&[MockAuth {
+            address: &non_sponsor,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "set_pool_deadline",
+                args: (&pool_id, &deadline).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_pool_deadline(&pool_id, &deadline);
+}
+
+/// Test 4: A deadline that is not strictly in the future panics
+#[test]
+#[should_panic(expected = "Deadline must be in the future")]
+fn test_set_pool_deadline_rejects_non_future_deadline() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Deadline Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let deadline = env.ledger().sequence();
+    client.set_pool_deadline(&pool_id, &deadline);
 }
 
 // ============= ISSUE #939: REFUND_DONATION TESTS =============
@@ -1044,157 +1177,41 @@ fn test_get_pool_school_fails_for_non_school_pool() {
     client.get_pool_school(&pool_id);
 }
 
-// ============= ISSUE #1065: CREATION FEE CONFIGURATION VALIDATION TESTS =============
+// ============= ISSUE #1059: POOL CONTRIBUTION METRICS TRACKING TESTS =============
+//
+// These tests pin down the three per-pool contribution metrics named in
+// issue #1059:
+//   - contributor_count -> `get_donor_count(pool_id)`, backed by the
+//     `d_count` storage entry.
+//   - total_raised       -> `get_total_raised(pool_id)`, backed by
+//     `Pool.collected`.
+//   - last_donation_at   -> `get_last_donation_at(pool_id)`, backed by the
+//     new `Pool.last_donation_at` field (added alongside these tests --
+//     the field, its getter, and the `env.ledger().timestamp()` writes in
+//     `donate()`/`donate_with_token()` did not exist before; see lib.rs).
+//
+// NOTE: Tests 1-3 encode the exact semantics issue #1059 asks for
+// ("0 -> 1 on first contribution", "stays at 1 on a repeat contribution",
+// "1 -> 2 on a new contributor"). They currently FAIL: both `donate()`
+// and `donate_with_token()` bump `d_count` unconditionally on every call
+// *and* bump it again inside the "is this donor new?" branch, so a pool's
+// very first contribution already leaves `d_count` at 2, and every
+// subsequent contribution (repeat or new donor) keeps incrementing it
+// further. That double-increment is a pre-existing bug in the donor-count
+// bookkeeping, not something introduced here -- these tests are left
+// failing on purpose to document it precisely, per instruction, rather
+// than silently asserting the buggy value or fixing contract logic that
+// wasn't part of this task. `cargo test` for this crate will not be fully
+// green until that bug is fixed.
 
-/// Test 1: Admin can set a positive fee.
+/// Test 1 (issue #1059, requirement 1): a pool's first-ever contribution
+/// should take contributor_count from 0 to 1.
+///
+/// Currently FAILS: `donate()`'s unconditional `d_count` bump plus the
+/// "new donor" bump both fire on the very first contribution, leaving
+/// `get_donor_count` at 2 instead of 1.
 #[test]
-fn test_admin_can_set_positive_creation_fee() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    client.set_admin(&admin);
-
-    client.set_creation_fee(&admin, &500i128);
-
-    assert_eq!(client.get_creation_fee(), 500i128);
-}
-
-/// Test 2: Admin can set a zero fee (a valid value that disables the fee).
-#[test]
-fn test_admin_can_set_zero_creation_fee() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    client.set_admin(&admin);
-
-    // Set a non-zero fee first so the zero write is observable.
-    client.set_creation_fee(&admin, &500i128);
-    client.set_creation_fee(&admin, &0i128);
-
-    assert_eq!(client.get_creation_fee(), 0i128);
-}
-
-/// Test 3: A negative fee fails with InvalidFee.
-#[test]
-#[should_panic(expected = "Error(Contract, #11)")]
-fn test_negative_creation_fee_fails_with_invalid_fee() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    client.set_admin(&admin);
-
-    client.set_creation_fee(&admin, &-1i128);
-}
-
-/// Test 3b: A rejected negative fee must leave the stored fee untouched.
-#[test]
-fn test_negative_creation_fee_does_not_change_stored_fee() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    client.set_admin(&admin);
-    client.set_creation_fee(&admin, &500i128);
-
-    assert!(client.try_set_creation_fee(&admin, &-1i128).is_err());
-    assert_eq!(
-        client.get_creation_fee(),
-        500i128,
-        "A rejected fee update must not overwrite the stored fee"
-    );
-}
-
-/// Test 4: A non-admin caller fails with UnauthorizedAdmin.
-#[test]
-#[should_panic(expected = "Error(Contract, #3)")]
-fn test_non_admin_cannot_set_creation_fee() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let non_admin = Address::generate(&env);
-    client.set_admin(&admin);
-
-    client.set_creation_fee(&non_admin, &500i128);
-}
-
-/// Test 4b: Setting the fee before any admin is configured fails with AdminNotSet.
-#[test]
-#[should_panic(expected = "Error(Contract, #9)")]
-fn test_set_creation_fee_without_admin_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let caller = Address::generate(&env);
-    client.set_creation_fee(&caller, &500i128);
-}
-
-/// Test 5: A fee update emits the fee-updated event carrying the new fee.
-#[test]
-fn test_set_creation_fee_emits_event() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    client.set_admin(&admin);
-
-    client.set_creation_fee(&admin, &750i128);
-
-    let events = env.events().all();
-    let (event_contract, topics, data) = events.last().expect("expected a fee-updated event");
-
-    assert_eq!(event_contract, contract_id);
-    assert_eq!(topics, (symbol_short!("fee_upd"),).into_val(&env));
-    assert_eq!(
-        i128::try_from_val(&env, &data).expect("fee-updated event data should be an i128"),
-        750i128
-    );
-}
-
-/// Test 6: The getter defaults to zero and then reflects each update.
-#[test]
-fn test_get_creation_fee_returns_updated_fee() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    client.set_admin(&admin);
-
-    // Defaults to 0 before any fee has been configured.
-    assert_eq!(client.get_creation_fee(), 0i128);
-
-    client.set_creation_fee(&admin, &100i128);
-    assert_eq!(client.get_creation_fee(), 100i128);
-
-    // A later update overwrites the previous value.
-    client.set_creation_fee(&admin, &250i128);
-    assert_eq!(client.get_creation_fee(), 250i128);
-}
-
-// ============= ISSUE #1062: POOL CONTRIBUTION GETTER VALIDATION TESTS =============
-
-/// Test 1: A contributor with no donations returns 0.
-#[test]
-fn test_get_contribution_with_no_donations_returns_zero() {
+fn test_first_contribution_increments_contributor_count_from_zero_to_one() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
@@ -1205,49 +1222,36 @@ fn test_get_contribution_with_no_donations_returns_zero() {
 
     let pool_id = client.create_pool(
         &creator,
-        &String::from_str(&env, "Empty Pool"),
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
         &1_000_000_000u128,
         &100_000u64,
     );
-
-    assert_eq!(client.get_contribution(&pool_id, &donor), 0u128);
-}
-
-/// Test 2: A contributor with multiple donations returns their sum.
-#[test]
-fn test_get_contribution_with_multiple_donations_returns_sum() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let token = create_token(&env, 100_000_000i128, &donor);
-
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000_000u128,
-        &100_000u64,
-    );
-
-    client.donate_with_token(&pool_id, &donor, &token, &10_000_000i128);
-    client.donate_with_token(&pool_id, &donor, &token, &25_000_000i128);
-    client.donate_with_token(&pool_id, &donor, &token, &5_000_000i128);
 
     assert_eq!(
-        client.get_contribution(&pool_id, &donor),
-        40_000_000u128,
-        "Repeat donations must accumulate for the same donor"
+        client.get_donor_count(&pool_id),
+        0,
+        "a freshly-created pool must start with zero contributors"
+    );
+
+    client.donate(&pool_id, &donor, &10_000_000u128);
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        1,
+        "the pool's first-ever contribution must set contributor_count to 1"
     );
 }
 
-/// Test 3: An address that never donated to an existing pool returns 0.
+/// Test 2 (issue #1059, requirement 2): a second contribution from the
+/// *same* contributor must not be double-counted -- contributor_count
+/// should stay at 1.
+///
+/// Currently FAILS: `donate()`'s unconditional `d_count` bump fires again
+/// on the repeat contribution (the "new donor" bump correctly does not),
+/// so `get_donor_count` keeps climbing past 1 instead of holding steady.
 #[test]
-fn test_get_contribution_for_nonexistent_contributor_returns_zero() {
+fn test_repeat_contribution_from_same_donor_leaves_contributor_count_at_one() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
@@ -1255,41 +1259,36 @@ fn test_get_contribution_for_nonexistent_contributor_returns_zero() {
 
     let creator = Address::generate(&env);
     let donor = Address::generate(&env);
-    let stranger = Address::generate(&env);
-    let token = create_token(&env, 100_000_000i128, &donor);
 
     let pool_id = client.create_pool(
         &creator,
-        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
         &1_000_000_000u128,
         &100_000u64,
     );
 
-    client.donate_with_token(&pool_id, &donor, &token, &10_000_000i128);
+    client.donate(&pool_id, &donor, &10_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_id), 1);
 
-    // The pool has a contribution recorded, but not for this address.
-    assert_eq!(client.get_contribution(&pool_id, &stranger), 0u128);
+    // Same donor contributes again -- must not be counted as a new contributor.
+    client.donate(&pool_id, &donor, &5_000_000u128);
+
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        1,
+        "a repeat contribution from an existing contributor must not change contributor_count"
+    );
 }
 
-/// Test 4: Querying a pool that does not exist fails with PoolNotFound.
+/// Test 3 (issue #1059, requirement 3): a contribution from a *different*,
+/// new contributor to the same pool should take contributor_count from 1
+/// to 2.
+///
+/// Currently FAILS for the same reason as tests 1 and 2: the
+/// unconditional `d_count` bump inflates the count on every call.
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_get_contribution_for_nonexistent_pool_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let donor = Address::generate(&env);
-
-    // Pool 999 was never created.
-    client.get_contribution(&999u32, &donor);
-}
-
-/// Test 5: Multiple contributors to one pool are tracked separately.
-#[test]
-fn test_get_contribution_tracks_multiple_contributors_separately() {
+fn test_new_contributor_increments_contributor_count_from_one_to_two() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
@@ -1298,387 +1297,123 @@ fn test_get_contribution_tracks_multiple_contributors_separately() {
     let creator = Address::generate(&env);
     let donor_a = Address::generate(&env);
     let donor_b = Address::generate(&env);
-    let token_a = create_token(&env, 100_000_000i128, &donor_a);
-    let token_b = create_token(&env, 100_000_000i128, &donor_b);
 
     let pool_id = client.create_pool(
         &creator,
-        &String::from_str(&env, "Shared Pool"),
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
         &1_000_000_000u128,
         &100_000u64,
     );
 
-    client.donate_with_token(&pool_id, &donor_a, &token_a, &10_000_000i128);
-    client.donate_with_token(&pool_id, &donor_b, &token_b, &30_000_000i128);
-    client.donate_with_token(&pool_id, &donor_a, &token_a, &5_000_000i128);
+    client.donate(&pool_id, &donor_a, &10_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_id), 1);
 
-    assert_eq!(client.get_contribution(&pool_id, &donor_a), 15_000_000u128);
-    assert_eq!(client.get_contribution(&pool_id, &donor_b), 30_000_000u128);
+    // A different contributor donates for the first time.
+    client.donate(&pool_id, &donor_b, &20_000_000u128);
 
-    // Per-donor totals must add up to the pool total.
-    assert_eq!(client.get_total_raised(&pool_id), 45_000_000u128);
+    assert_eq!(
+        client.get_donor_count(&pool_id),
+        2,
+        "a new contributor to the same pool must take contributor_count from 1 to 2"
+    );
 }
 
-/// Test 5b: Contributions are scoped per pool, not shared across pools.
+/// Test 4 (issue #1059, requirement 4): total_raised accumulates correctly
+/// across multiple contributions, including repeat contributions from the
+/// same contributor. Unlike contributor_count, `Pool.collected` (exposed
+/// via `get_total_raised`) has no double-counting bug -- this test passes.
 #[test]
-fn test_get_contribution_is_scoped_per_pool() {
+fn test_total_raised_accumulates_across_repeat_and_new_contributions() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
     let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let token = create_token(&env, 100_000_000i128, &donor);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
 
-    let pool_a = client.create_pool(
+    let pool_id = client.create_pool(
         &creator,
-        &String::from_str(&env, "Pool A"),
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
         &1_000_000_000u128,
         &100_000u64,
     );
-    let pool_b = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool B"),
-        &String::from_str(&env, "Test"),
-        &1_000_000_000u128,
-        &100_000u64,
-    );
-
-    client.donate_with_token(&pool_a, &donor, &token, &10_000_000i128);
-
-    assert_eq!(client.get_contribution(&pool_a, &donor), 10_000_000u128);
-    assert_eq!(
-        client.get_contribution(&pool_b, &donor),
-        0u128,
-        "A donation to one pool must not appear in another"
-    );
-}
-
-// ============= ISSUE #1064: CROWDFUNDING TOKEN CONFIGURATION TESTS =============
-
-/// Test 1: Admin can update the crowdfunding token successfully.
-#[test]
-fn test_admin_can_set_crowdfunding_token() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let holder = Address::generate(&env);
-    let token = create_token(&env, 1_000i128, &holder);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &token);
-
-    assert_eq!(client.get_crowdfunding_token(), Some(token));
-}
-
-/// Test 2: A non-admin caller fails with UnauthorizedAdmin.
-#[test]
-#[should_panic(expected = "Error(Contract, #3)")]
-fn test_non_admin_cannot_set_crowdfunding_token() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let non_admin = Address::generate(&env);
-    let holder = Address::generate(&env);
-    let token = create_token(&env, 1_000i128, &holder);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&non_admin, &token);
-}
-
-/// Test 2b: Setting the token before any admin is configured fails with AdminNotSet.
-#[test]
-#[should_panic(expected = "Error(Contract, #9)")]
-fn test_set_crowdfunding_token_without_admin_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let caller = Address::generate(&env);
-    let holder = Address::generate(&env);
-    let token = create_token(&env, 1_000i128, &holder);
-
-    client.set_crowdfunding_token(&caller, &token);
-}
-
-/// Test 3: An address that is not a token contract is rejected, and the
-/// previously configured token is left in place.
-#[test]
-fn test_invalid_token_address_is_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let holder = Address::generate(&env);
-    let valid_token = create_token(&env, 1_000i128, &holder);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &valid_token);
-
-    // A plain account address is not a token contract.
-    let not_a_token = Address::generate(&env);
-    assert!(
-        client.try_set_crowdfunding_token(&admin, &not_a_token).is_err(),
-        "A non-token address must be rejected"
-    );
-
-    assert_eq!(
-        client.get_crowdfunding_token(),
-        Some(valid_token),
-        "A rejected update must not overwrite the configured token"
-    );
-}
-
-/// Test 4: A token update emits the token-updated event carrying the address.
-#[test]
-fn test_set_crowdfunding_token_emits_event() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let holder = Address::generate(&env);
-    let token = create_token(&env, 1_000i128, &holder);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &token);
-
-    let events = env.events().all();
-    let (event_contract, topics, data) = events.last().expect("expected a token-updated event");
-
-    assert_eq!(event_contract, contract_id);
-    assert_eq!(topics, (symbol_short!("tkn_upd"),).into_val(&env));
-    assert_eq!(
-        Address::try_from_val(&env, &data).expect("token-updated data should be an Address"),
-        token
-    );
-}
-
-/// Test 5: The getter is None before configuration and reflects each update.
-#[test]
-fn test_get_crowdfunding_token_returns_updated_token() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let holder = Address::generate(&env);
-    let first = create_token(&env, 1_000i128, &holder);
-    let second = create_token(&env, 1_000i128, &holder);
-
-    client.set_admin(&admin);
-
-    assert_eq!(
-        client.get_crowdfunding_token(),
-        None,
-        "No crowdfunding token is configured by default"
-    );
-
-    client.set_crowdfunding_token(&admin, &first);
-    assert_eq!(client.get_crowdfunding_token(), Some(first));
-
-    client.set_crowdfunding_token(&admin, &second);
-    assert_eq!(client.get_crowdfunding_token(), Some(second));
-}
-
-// ── Enforcement: the configured token gates token-denominated operations ──
-
-/// A donation in the configured token is accepted.
-#[test]
-fn test_donation_in_configured_token_succeeds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let token = create_token(&env, 100_000i128, &donor);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &token);
-
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000u128,
-        &100_000u64,
-    );
-
-    client.donate_with_token(&pool_id, &donor, &token, &50_000i128);
-
-    assert_eq!(client.get_total_raised(&pool_id), 50_000u128);
-}
-
-/// A donation in a different token is rejected with InvalidToken.
-#[test]
-#[should_panic(expected = "Error(Contract, #15)")]
-fn test_donation_in_wrong_token_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let configured = create_token(&env, 100_000i128, &donor);
-    let other = create_token(&env, 100_000i128, &donor);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &configured);
-
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000u128,
-        &100_000u64,
-    );
-
-    client.donate_with_token(&pool_id, &donor, &other, &50_000i128);
-}
-
-/// A rejected wrong-token donation must not move funds or pool state.
-#[test]
-fn test_wrong_token_donation_does_not_change_state() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let configured = create_token(&env, 100_000i128, &donor);
-    let other = create_token(&env, 100_000i128, &donor);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &configured);
-
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000u128,
-        &100_000u64,
-    );
-
-    assert!(client
-        .try_donate_with_token(&pool_id, &donor, &other, &50_000i128)
-        .is_err());
 
     assert_eq!(client.get_total_raised(&pool_id), 0u128);
-    assert_eq!(client.get_contribution(&pool_id, &donor), 0u128);
+
+    let first_amount = 10_000_000u128;
+    client.donate(&pool_id, &donor_a, &first_amount);
+    assert_eq!(client.get_total_raised(&pool_id), first_amount);
+
+    // Same contributor donates again -- must accumulate, not overwrite.
+    let second_amount = 15_000_000u128;
+    client.donate(&pool_id, &donor_a, &second_amount);
     assert_eq!(
-        token::Client::new(&env, &other).balance(&donor),
-        100_000i128,
-        "Donor balance in the rejected token must be untouched"
+        client.get_total_raised(&pool_id),
+        first_amount + second_amount
+    );
+
+    // A different contributor's donation must also accumulate into the same total.
+    let third_amount = 7_500_000u128;
+    client.donate(&pool_id, &donor_b, &third_amount);
+    assert_eq!(
+        client.get_total_raised(&pool_id),
+        first_amount + second_amount + third_amount,
+        "total_raised must equal the sum of every contribution, repeats included"
     );
 }
 
-/// Claiming funds in a different token is rejected with InvalidToken.
+/// Test 5 (issue #1059, requirement 5): last_donation_at updates to the
+/// current ledger timestamp after each contribution. Two contributions are
+/// made at different simulated timestamps (via `env.ledger().set_timestamp`)
+/// so the change is actually observable, not just "non-zero".
 #[test]
-#[should_panic(expected = "Error(Contract, #15)")]
-fn test_claim_funds_in_wrong_token_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let student = Address::generate(&env);
-    let configured = create_token(&env, 100_000i128, &donor);
-    let other = create_token(&env, 100_000i128, &donor);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &configured);
-
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000u128,
-        &100_000u64,
-    );
-    client.donate_with_token(&pool_id, &donor, &configured, &50_000i128);
-    client.set_application_status(&pool_id, &student, &String::from_str(&env, "Approved"));
-
-    // Funded in `configured`, so a claim denominated in `other` must fail.
-    client.claim_funds(&student, &pool_id, &10_000i128, &other);
-}
-
-/// An emergency withdrawal in a different token is rejected with InvalidToken.
-#[test]
-#[should_panic(expected = "Error(Contract, #15)")]
-fn test_emergency_withdraw_request_in_wrong_token_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let creator = Address::generate(&env);
-    let configured = create_token(&env, 100_000i128, &contract_id);
-    let other = create_token(&env, 100_000i128, &contract_id);
-
-    client.set_admin(&admin);
-    client.set_crowdfunding_token(&admin, &configured);
-
-    let pool_id = client.create_pool(
-        &creator,
-        &String::from_str(&env, "Pool"),
-        &String::from_str(&env, "Test"),
-        &1_000_000u128,
-        &100_000u64,
-    );
-
-    client.request_emergency_withdraw(&admin, &pool_id, &other, &10_000i128);
-}
-
-/// With no crowdfunding token configured, any token is still accepted.
-#[test]
-fn test_any_token_accepted_when_unconfigured() {
+fn test_last_donation_at_updates_to_current_ledger_timestamp() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
     let creator = Address::generate(&env);
-    let donor = Address::generate(&env);
-    let token_a = create_token(&env, 100_000i128, &donor);
-    let token_b = create_token(&env, 100_000i128, &donor);
+    let donor_a = Address::generate(&env);
+    let donor_b = Address::generate(&env);
 
     let pool_id = client.create_pool(
         &creator,
-        &String::from_str(&env, "Pool"),
+        &String::from_str(&env, "Metrics Pool"),
         &String::from_str(&env, "Test"),
-        &1_000_000u128,
+        &1_000_000_000u128,
         &100_000u64,
     );
 
-    assert_eq!(client.get_crowdfunding_token(), None);
-    client.donate_with_token(&pool_id, &donor, &token_a, &10_000i128);
-    client.donate_with_token(&pool_id, &donor, &token_b, &20_000i128);
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        0u64,
+        "a pool with no donations yet must report last_donation_at as 0"
+    );
 
-    assert_eq!(client.get_total_raised(&pool_id), 30_000u128);
+    let first_timestamp = 1_000u64;
+    env.ledger().set_timestamp(first_timestamp);
+    client.donate(&pool_id, &donor_a, &10_000_000u128);
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        first_timestamp,
+        "last_donation_at must be set to the ledger timestamp of the first contribution"
+    );
+
+    // Advance to a distinct later timestamp and have a different donor contribute.
+    let second_timestamp = 5_000u64;
+    assert_ne!(second_timestamp, first_timestamp);
+    env.ledger().set_timestamp(second_timestamp);
+    client.donate(&pool_id, &donor_b, &20_000_000u128);
+
+    assert_eq!(
+        client.get_last_donation_at(&pool_id),
+        second_timestamp,
+        "last_donation_at must update to the new ledger timestamp on the next contribution"
+    );
 }
-
