@@ -1,13 +1,7 @@
 name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+on: [push, pull_request]
 jobs:
-  frontend:
+  build:
     name: Frontend — Build
     runs-on: ubuntu-latest
     defaults:
@@ -31,8 +25,10 @@ jobs:
           NEXT_PUBLIC_STELLAR_NETWORK: testnet
         run: npm run build
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Check for remaining mock data
-        working-directory: ./nevo_frontend
         run: |
           if grep -r "MOCK_" app/ src/store/ \
             --include="*.ts" \
