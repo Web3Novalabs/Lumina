@@ -128,6 +128,17 @@ export class PoolsService {
     return this.poolRepo.save(pool);
   }
 
+  async findAll(query: FilterPoolsDto): Promise<Pool[]> {
+    if (!query.search) return this.poolRepo.find();
+
+    return this.poolRepo
+      .createQueryBuilder('pool')
+      .where('pool.title ILIKE :search OR pool.description ILIKE :search', {
+        search: `%${query.search}%`,
+      })
+      .getMany();
+  }
+
   async findByContractId(contractPoolId: string): Promise<Pool | null> {
     return this.poolRepo.findOne({ where: { contractPoolId } });
   }
