@@ -14,8 +14,13 @@ import type {
   ApiUser,
   PaginatedResponse,
 } from './api-types';
+import { env, validatePublicEnv } from './env';
+import { getToken } from './auth-storage';
+import { toast } from '../components/Toast';
 
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+validatePublicEnv();
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 export interface RequestConfig extends Omit<RequestInit, 'method' | 'body'> {
   params?: Record<string, string | number | boolean | undefined>;
@@ -39,6 +44,13 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+export class UnauthorizedError extends ApiError {
+  constructor(message: string, data?: unknown) {
+    super(401, message, data);
+    this.name = 'UnauthorizedError';
   }
 }
 
@@ -73,16 +85,36 @@ export class ApiClient {
 
   constructor(
     baseURL: string = '',
-    defaultTimeout: number = 10000,
+    defaultTimeout: number = 10_000,
     rateLimit: Partial<RateLimitOptions> = DEFAULT_RATE_LIMIT_OPTIONS
   ) {
-    this.baseURL =
-      baseURL ||
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      'http://localhost:3000';
+    this.baseURL = baseURL || env.NEXT_PUBLIC_API_BASE_URL;
     this.defaultTimeout = defaultTimeout;
     this.defaultRateLimit = resolveRateLimitOptions(rateLimit);
     this.rateLimiter = new ClientRateLimiter();
+    this.addRequestInterceptor((config) =>
+      this.attachAuthorizationHeader(config)
+    );
+  }
+
+  private attachAuthorizationHeader(
+    config: PreparedRequestConfig
+  ): PreparedRequestConfig {
+    if (config.requireAuth === false) {
+      return config;
+    }
+
+    const headers = new Headers(config.headers);
+    const accessToken = getToken();
+
+    if (accessToken) {
+      headers.set('Authorization', `Bearer ${accessToken}`);
+    }
+
+    return {
+      ...config,
+      headers,
+    };
   }
 
   private startRequest() {
@@ -373,6 +405,14 @@ export class ApiClient {
             } catch {
               errorData = await response.text();
             }
+            if (response.status >= 500 && response.status < 600) {
+              if (typeof window !== 'undefined') {
+                toast('Something went wrong. Please try again.', 'error');
+              }
+            }
+            if (response.status === 401) {
+              throw new UnauthorizedError(response.statusText, errorData);
+            }
             throw new ApiError(response.status, response.statusText, errorData);
           }
 
@@ -401,7 +441,9 @@ export class ApiClient {
             'name' in error &&
             error.name === 'AbortError'
           ) {
-            finalError = new Error(`Request timed out after ${timeout}ms`);
+            finalError = new Error(
+              `Request timed out. Please check your connection.`
+            );
           }
 
           // Don't retry on client errors (4xx) except 429 Too Many Requests
@@ -546,6 +588,13 @@ apiClient.addResponseInterceptor((response) => {
 
 // ─── API call functions ──────────────────────────────────────────────────────
 
+export function updateProfile(displayName: string): Promise<ApiProfile> {
+  return apiClient.request<ApiProfile>('/users/me', 'PATCH', {
+    body: { displayName },
+    requireAuth: true,
+  });
+}
+
 export interface CreatePoolPayload {
   title: string;
   description: string;
@@ -562,8 +611,11 @@ export interface CreatePoolResponse {
   unsignedXdr: string;
 }
 
-export function fetchMyDonations(): Promise<ApiDonation[]> {
-  return apiClient.get<ApiDonation[]>('/donations/me');
+export function fetchMyDonations(limit?: number): Promise<ApiDonation[]> {
+  return apiClient.get<ApiDonation[]>(
+    '/users/me/donations',
+    limit ? { params: { limit } } : undefined
+  );
 }
 
 export function fetchMyProfile(): Promise<ApiUser> {
@@ -600,6 +652,18 @@ export function closePool(
   return apiClient.post<{ unsignedXdr: string }>(
     `/pools/${poolId}/close`,
     undefined,
+    {
+      requireAuth: true,
+    }
+  );
+}
+
+export function withdrawPool(
+  poolId: string | number
+): Promise<{ unsignedXdr: string }> {
+  return apiClient.post<{ unsignedXdr: string }>(
+    `/pools/${poolId}/withdraw`,
+    undefined,
     { requireAuth: true }
   );
 }
@@ -614,4 +678,48 @@ export function donate(
 
 export function submitSignedXdr(xdr: string): Promise<{ txHash: string }> {
   return apiClient.post<{ txHash: string }>('/transactions/submit', { xdr });
+}
+
+export function verifyAuthSignature(
+  publicKey: string,
+  nonce: string,
+  signature: string
+): Promise<{ accessToken: string }> {
+  return apiClient.post<{ accessToken: string }>('/auth/verify', {
+    publicKey,
+    signature,
+    message: nonce,
+  });
+}
+
+export interface AuthChallenge {
+  nonce: string;
+  expiresAt: number;
+}
+
+export function fetchAuthChallenge(publicKey: string): Promise<AuthChallenge> {
+  return apiClient.get<AuthChallenge>('/auth/challenge', {
+    params: { publicKey },
+    requireAuth: false,
+    cacheResponse: false,
+  });
+}
+
+// ─── Type exports for main branch compatibility ─────────────────────────────
+
+export interface ApiDonation {
+  id: string;
+  type: 'donation' | 'pool_creation' | 'withdrawal';
+  amount: string;
+  asset: string;
+  recipient: string;
+  date: string;
+  status: 'completed' | 'pending' | 'failed';
+  txHash: string;
+}
+
+export interface ApiProfile {
+  publicKey: string;
+  displayName: string | null;
+  createdAt: string;
 }

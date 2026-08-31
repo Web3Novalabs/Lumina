@@ -5,57 +5,33 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { DonateModal } from '@/components/DonateModal';
 import { EmptyState } from '@/components/EmptyState';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { WalletAddress } from '@/components/WalletAddress';
 import { CopyButton } from '@/components/CopyButton';
+import { toast } from '@/components/Toast';
 import { usePoolsStore } from '@/src/store/poolsStore';
 import type { Pool } from '@/src/store/poolsStore';
 import { useWalletStore } from '@/src/store/walletStore';
-import { closePool, submitSignedXdr } from '@/lib/api-client';
+import { closePool, submitSignedXdr, withdrawPool } from '@/lib/api-client';
 import { signTransaction } from '@stellar/freighter-api';
-import { toast } from '@/components/Toast';
 
-// Removed MOCK_POOLS
+// Testnet XLM native contract address (same as api-client)
+const TESTNET_XLM_CONTRACT =
+  'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
 
-interface Contributor {
-  address: string;
-  amount: number;
-  donatedAt: string;
-}
-
-const MOCK_CONTRIBUTORS: Record<string, Contributor[]> = {
-  '1': [
-    {
-      address: 'GXYZ1234567890ABCDE1234567890ABCDE1234567890ABCDE1234567890AB',
-      amount: 500,
-      donatedAt: '2025-03-05',
-    },
-    {
-      address: 'GABC9876543210ZYXWV9876543210ZYXWV9876543210ZYXWV9876543210ZY',
-      amount: 1200,
-      donatedAt: '2025-03-12',
-    },
-  ],
-  '2': [
-    {
-      address: 'GXYZ1234567890ABCDE1234567890ABCDE1234567890ABCDE1234567890AB',
-      amount: 750,
-      donatedAt: '2025-01-20',
-    },
-  ],
-  '3': [
-    {
-      address: 'GDEF5555555555GHIJK5555555555GHIJK5555555555GHIJK5555555555GH',
-      amount: 1000,
-      donatedAt: '2024-11-15',
-    },
-  ],
-};
+type WithdrawStep = 'idle' | 'creating' | 'signing' | 'submitting';
 
 interface TimelineEvent {
   id: string;
   label: string;
   date: string;
   amount?: number;
+}
+
+interface Contributor {
+  address: string;
+  amount: number;
+  donatedAt: string;
 }
 
 // ── Comments ────────────────────────────────────────────────────────────────
@@ -71,50 +47,7 @@ interface Comment {
   replies: Comment[];
 }
 
-// TODO: Replace with real API call to GET /pools/:id/comments
-const MOCK_COMMENTS: Record<string, Comment[]> = {
-  '1': [
-    {
-      id: 'c1',
-      poolId: '1',
-      authorAddress:
-        'GXYZ1234567890ABCDE1234567890ABCDE1234567890ABCDE1234567890AB',
-      text: 'Amazing initiative! How are the funds being allocated?',
-      createdAt: '2025-03-06T10:00:00Z',
-      parentId: null,
-      replies: [
-        {
-          id: 'c1r1',
-          poolId: '1',
-          authorAddress:
-            'GABC9876543210ZYXWV9876543210ZYXWV9876543210ZYXWV9876543210ZY',
-          text: 'Funds go directly to vetted local partners. You can track every withdrawal on-chain!',
-          createdAt: '2025-03-06T11:30:00Z',
-          parentId: 'c1',
-          replies: [],
-        },
-      ],
-    },
-    {
-      id: 'c2',
-      poolId: '1',
-      authorAddress:
-        'GABC9876543210ZYXWV9876543210ZYXWV9876543210ZYXWV9876543210ZY',
-      text: 'Love that everything is transparent on-chain. Keep up the great work!',
-      createdAt: '2025-03-10T14:20:00Z',
-      parentId: null,
-      replies: [],
-    },
-  ],
-};
-
-const MOCK_LAST_UPDATED: Record<string, string> = {
-  '1': '2025-04-15',
-  '2': '2025-02-01',
-  '3': '2024-12-31',
-};
-
-export default function PoolDetailPage() {
+function PoolDetailPageContent() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { publicKey, initialize } = useWalletStore();
@@ -127,6 +60,51 @@ export default function PoolDetailPage() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [donateOpen, setDonateOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [withdrawStep, setWithdrawStep] = useState<WithdrawStep>('idle');
+
+  const handleWithdraw = async () => {
+    if (!pool || !publicKey) return;
+    try {
+      setWithdrawStep('creating');
+      const { unsignedXdr } = await withdrawPool(pool.id);
+
+      setWithdrawStep('signing');
+      const signedResult = await signTransaction(unsignedXdr, {
+        networkPassphrase:
+          process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+          'Test SDF Network ; September 2015',
+      });
+
+      if (signedResult.error) {
+        throw new Error(signedResult.error);
+      }
+
+      setWithdrawStep('submitting');
+      await submitSignedXdr(signedResult.signedTxXdr);
+      toast('Withdrawal successful');
+
+      await fetchPool(Number(pool.id));
+    } catch (err: unknown) {
+      const error = err as Error;
+      toast(error.message || 'Failed to withdraw funds', 'error');
+      console.error(error);
+    } finally {
+      setWithdrawStep('idle');
+    }
+  };
+
+  const withdrawLabel = () => {
+    switch (withdrawStep) {
+      case 'creating':
+        return 'Preparing...';
+      case 'signing':
+        return 'Signing...';
+      case 'submitting':
+        return 'Submitting...';
+      default:
+        return 'Withdraw Funds';
+    }
+  };
 
   const handleClosePool = async () => {
     if (!pool || !publicKey) return;
@@ -149,9 +127,8 @@ export default function PoolDetailPage() {
 
       await fetchPool(Number(pool.id));
     } catch (err: unknown) {
-      const error = err as Error;
-      toast(error.message || 'Failed to close pool', 'error');
-      console.error(error);
+      toast(parseApiError(err), 'error');
+      console.error(err);
     } finally {
       setIsClosing(false);
     }
@@ -168,9 +145,9 @@ export default function PoolDetailPage() {
       if (!p) {
         router.replace('/pools');
       } else {
-        setContributors(MOCK_CONTRIBUTORS[id] ?? []);
+        setContributors([]);
         // TODO: replace with real API call: apiClient.get(`/pools/${id}/comments`)
-        setComments(MOCK_COMMENTS[id] ?? []);
+        setComments([]);
       }
     };
     loadPool();
@@ -199,7 +176,7 @@ export default function PoolDetailPage() {
   const isOwner = publicKey !== null && publicKey === pool.creator;
   const isCompleted = pool.status === 'Completed';
   const isActive = pool.status === 'Active';
-  const lastUpdated = MOCK_LAST_UPDATED[pool.id] ?? pool.createdAt;
+  const lastUpdated = pool.createdAt;
 
   // Impact Dashboard Calculations
   const averageDonation =
@@ -254,6 +231,15 @@ export default function PoolDetailPage() {
                 {pool.title}
               </h1>
               <StatusBadge status={pool.status} />
+              <CopyButton
+                text={
+                  typeof window !== 'undefined'
+                    ? window.location.href
+                    : `/pools/${pool.id}`
+                }
+                iconOnly
+                aria-label="Copy pool link"
+              />
             </div>
 
             <div className="mt-2 flex flex-wrap gap-3 text-sm text-[var(--color-text-muted)]">
@@ -333,43 +319,26 @@ export default function PoolDetailPage() {
             </h2>
 
             {contributors.length === 0 ? (
-              <>
-                <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-8 text-center">
-                  <p className="font-semibold">No contributions yet</p>
-                  <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                    Be the first to support this pool.
-                  </p>
-                  {isActive && (
-                    <button
-                      type="button"
-                      onClick={() => setDonateOpen(true)}
-                      className="mt-4 rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors"
-                    >
-                      Donate Now
-                    </button>
-                  )}
-                </div>
-                <EmptyState
-                  variant="compact"
-                  icon="contributors"
-                  iconTone="muted"
-                  title="No contributions yet"
-                  description="Be the first to support this pool."
-                  action={
-                    isActive
-                      ? {
-                          label: 'Donate Now',
-                          onClick: () => setDonateOpen(true),
-                        }
-                      : undefined
-                  }
-                  steps={[
-                    { text: 'Connect your Stellar wallet' },
-                    { text: 'Choose an amount to donate' },
-                    { text: 'Confirm the transaction in Freighter' },
-                  ]}
-                />
-              </>
+              <EmptyState
+                variant="compact"
+                icon="contributors"
+                iconTone="muted"
+                title="No contributions yet"
+                description="Be the first to support this pool."
+                action={
+                  isActive
+                    ? {
+                        label: 'Donate Now',
+                        onClick: () => setDonateOpen(true),
+                      }
+                    : undefined
+                }
+                steps={[
+                  { text: 'Connect your Stellar wallet' },
+                  { text: 'Choose an amount to donate' },
+                  { text: 'Confirm the transaction in Freighter' },
+                ]}
+              />
             ) : (
               <ul className="flex flex-col gap-2" role="list">
                 {contributors.map((c, i) => (
@@ -485,18 +454,13 @@ export default function PoolDetailPage() {
             </h2>
 
             {timeline.length === 0 ? (
-              <>
-                <p className="text-sm text-[var(--color-text-muted)]">
-                  Pool milestones and donations will appear here as they happen.
-                </p>
-                <EmptyState
-                  variant="compact"
-                  icon="history"
-                  iconTone="muted"
-                  title="No activity yet"
-                  description="Pool milestones and donations will appear here as they happen."
-                />
-              </>
+              <EmptyState
+                variant="compact"
+                icon="history"
+                iconTone="muted"
+                title="No activity yet"
+                description="Pool milestones and donations will appear here as they happen."
+              />
             ) : (
               <ol
                 className="relative border-l border-[var(--color-border)] pl-6"
@@ -585,6 +549,20 @@ export default function PoolDetailPage() {
               {isCompleted ? 'Pool Closed' : 'Donate Now'}
             </button>
 
+            {isOwner && isCompleted && (
+              <button
+                type="button"
+                onClick={handleWithdraw}
+                disabled={withdrawStep !== 'idle'}
+                className="mt-3 w-full rounded-full border border-brand-600 px-6 py-3 text-sm font-semibold text-brand-600 hover:bg-brand-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+              >
+                {withdrawStep !== 'idle' && (
+                  <span className="mr-2 inline-block size-4 animate-spin rounded-full border-2 border-brand-600 border-t-transparent align-middle" />
+                )}
+                {withdrawLabel()}
+              </button>
+            )}
+
             <div className="mt-4">
               <CopyButton
                 text={
@@ -608,9 +586,21 @@ export default function PoolDetailPage() {
       </div>
 
       {donateOpen && (
-        <DonateModal pool={pool} onClose={() => setDonateOpen(false)} />
+        <DonateModal
+          pool={pool}
+          onClose={() => setDonateOpen(false)}
+          onDonationSuccess={() => fetchPool(Number(id))}
+        />
       )}
     </main>
+  );
+}
+
+export default function PoolDetailPage() {
+  return (
+    <ErrorBoundary>
+      <PoolDetailPageContent />
+    </ErrorBoundary>
   );
 }
 

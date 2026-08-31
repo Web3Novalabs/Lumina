@@ -1,15 +1,15 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class HorizonService {
   private readonly horizonUrl: string;
+  private readonly logger = new Logger(HorizonService.name);
 
   constructor(private readonly configService: ConfigService) {
-    this.horizonUrl = this.configService.get<string>(
-      'HORIZON_URL',
-      'https://horizon-testnet.stellar.org',
-    ).replace(/\/$/, '');
+    this.horizonUrl = this.configService
+      .get<string>('HORIZON_URL', 'https://horizon-testnet.stellar.org')
+      .replace(/\/$/, '');
   }
 
   /**
@@ -20,7 +20,9 @@ export class HorizonService {
    */
   async getTransactions(contractId: string, cursor?: string): Promise<any[]> {
     try {
-      const url = new URL(`${this.horizonUrl}/accounts/${contractId}/transactions`);
+      const url = new URL(
+        `${this.horizonUrl}/accounts/${contractId}/transactions`,
+      );
       url.searchParams.append('order', 'asc');
       if (cursor) {
         url.searchParams.append('cursor', cursor);
@@ -34,14 +36,18 @@ export class HorizonService {
         );
       }
 
-      const data = (await response.json()) as any;
+      const data = await response.json();
       return data?._embedded?.records ?? [];
     } catch (error: any) {
       if (error instanceof HttpException) {
         throw error;
       }
+      this.logger.error(
+        'Unexpected error fetching transactions from Horizon',
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new HttpException(
-        error.message || 'Internal server error while fetching transactions',
+        'An unexpected error occurred while fetching transactions',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

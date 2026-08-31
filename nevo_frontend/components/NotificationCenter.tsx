@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useNotificationsStore } from '@/src/store/notificationsStore';
+import { ConfirmDialog } from './ConfirmDialog';
+import { EmptyState } from '@/components/EmptyState';
 
 export function NotificationCenter() {
   const {
@@ -13,9 +15,16 @@ export function NotificationCenter() {
     clearAll,
   } = useNotificationsStore();
   const [isOpen, setIsOpen] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  const closeAndReturnFocus = () => {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  };
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -26,13 +35,23 @@ export function NotificationCenter() {
         setIsOpen(false);
       }
     }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && isOpen) {
+        closeAndReturnFocus();
+      }
+    }
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
 
   return (
     <div className="relative" ref={dropdownRef}>
       <button
+        ref={triggerRef}
         type="button"
         className="relative flex items-center justify-center size-10 rounded-full hover:bg-[var(--color-surface-raised)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
         onClick={() => setIsOpen(!isOpen)}
@@ -71,19 +90,42 @@ export function NotificationCenter() {
                 Mark all read
               </button>
               <button
-                onClick={() => clearAll()}
+                onClick={() => setShowClearConfirm(true)}
                 className="text-error hover:text-error-dark font-medium"
               >
                 Clear all
+              </button>
+              <button
+                onClick={closeAndReturnFocus}
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                aria-label="Close notifications"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="size-4"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M6 18 18 6M6 6l12 12"
+                  />
+                </svg>
               </button>
             </div>
           </div>
 
           <div className="max-h-80 overflow-y-auto">
             {notifications.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
-                You have no notifications.
-              </div>
+              <EmptyState
+                icon="history"
+                title="No notifications yet"
+                description="You'll see updates about your pools and donations here."
+                variant="compact"
+              />
             ) : (
               <ul className="divide-y divide-[var(--color-border)]">
                 {notifications.map((n) => (
@@ -101,7 +143,7 @@ export function NotificationCenter() {
                         <button
                           onClick={() => deleteNotification(n.id)}
                           className="text-[var(--color-text-muted)] hover:text-error transition-colors"
-                          aria-label="Delete notification"
+                          aria-label={`Delete notification: ${(n.title || n.message || '').trim().slice(0, 60) || 'Untitled'}`}
                         >
                           <svg
                             xmlns="http://www.w3.org/2000/svg"
@@ -154,6 +196,19 @@ export function NotificationCenter() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={showClearConfirm}
+        title="Clear all notifications?"
+        message="This action cannot be undone. All your notifications will be permanently removed."
+        confirmLabel="Clear all"
+        variant="danger"
+        onConfirm={() => {
+          clearAll();
+          setShowClearConfirm(false);
+        }}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </div>
   );
 }

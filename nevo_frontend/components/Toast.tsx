@@ -1,6 +1,8 @@
+//Toast
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { CheckIcon, XIcon, InfoIcon } from '@/components/icons';
 
 export type ToastType = 'success' | 'error' | 'info';
 
@@ -23,10 +25,16 @@ export function toast(message: string, type: ToastType = 'success') {
 }
 
 function ToastItem({ toast: t, onDismiss }: ToastItemProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+
+  const isPaused = isHovered || isFocused;
+
   useEffect(() => {
+    if (isPaused) return;
     const timer = setTimeout(() => onDismiss(t.id), 3000);
     return () => clearTimeout(timer);
-  }, [t.id, onDismiss]);
+  }, [t.id, onDismiss, isPaused]);
 
   const bgColor = {
     success: 'bg-green-600',
@@ -35,63 +43,23 @@ function ToastItem({ toast: t, onDismiss }: ToastItemProps) {
   };
 
   const icon = {
-    success: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        strokeWidth={2}
-        stroke="currentColor"
-        className="size-4 shrink-0"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="m4.5 12.75 6 6 9-13.5"
-        />
-      </svg>
-    ),
-    error: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        strokeWidth={2}
-        stroke="currentColor"
-        className="size-4 shrink-0"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M6 18 18 6M6 6l12 12"
-        />
-      </svg>
-    ),
-    info: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        strokeWidth={2}
-        stroke="currentColor"
-        className="size-4 shrink-0"
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"
-        />
-      </svg>
-    ),
+    success: <CheckIcon className="size-4 shrink-0" />,
+    error: <XIcon className="size-4 shrink-0" />,
+    info: <InfoIcon className="size-4 shrink-0" />,
   };
 
   return (
     <div
       role="status"
       aria-live="polite"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onFocus={() => setIsFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setIsFocused(false);
+        }
+      }}
       className={`pointer-events-auto flex items-center gap-2 rounded-lg ${bgColor[t.type]} px-4 py-2.5 text-sm font-medium text-white shadow-lg transition-all duration-300`}
     >
       {icon[t.type]}
@@ -102,21 +70,7 @@ function ToastItem({ toast: t, onDismiss }: ToastItemProps) {
         className="ml-2 rounded p-0.5 hover:bg-white/20 transition-colors"
         aria-label="Dismiss notification"
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-          stroke="currentColor"
-          className="size-3"
-          aria-hidden="true"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M6 18 18 6M6 6l12 12"
-          />
-        </svg>
+        <XIcon className="size-3" />
       </button>
     </div>
   );

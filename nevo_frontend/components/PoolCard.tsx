@@ -42,16 +42,8 @@ export const PoolCard: FC<PoolCardProps> = ({
     ? `${creator.slice(0, 6)}...${creator.slice(-4)}`
     : 'Anonymous';
 
-  // Mock donor count if not provided
-  const displayDonorCount =
-    donorCount ??
-    (id === '1'
-      ? 42
-      : id === '2'
-        ? 87
-        : id === '3'
-          ? 31
-          : Math.floor((raised * 7.3) / 100) + 1);
+  // Use real donor count when provided; otherwise show an honest zero state
+  const displayDonorCount = donorCount ?? 0;
 
   return (
     <Link href={`/pools/${id}`} className="block group no-underline">

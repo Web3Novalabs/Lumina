@@ -22,7 +22,7 @@ export class Nonce {
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @Column({ name: 'expires_at', type: 'timestamp' })
+  @Column({ name: 'expires_at', type: 'datetime' })
   expiresAt: Date;
 
   @Column({ name: 'used', type: 'boolean', default: false })

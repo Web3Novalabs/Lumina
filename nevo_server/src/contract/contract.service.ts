@@ -47,29 +47,18 @@ export class ContractService {
     title: string;
     description: string;
   }): string {
-    try {
-      const { creator, goal, token, title, description } = params;
-      const source = new Account(creator, '0');
-      const tx = new TransactionBuilder(source, {
-        fee: BASE_FEE,
-        networkPassphrase: NETWORK_PASSPHRASE,
-      })
-        .addOperation(
-          this.contract.call(
-            'create_pool',
-            nativeToScVal(creator, { type: 'address' }),
-            nativeToScVal(BigInt(goal), { type: 'i128' }),
-            nativeToScVal(token, { type: 'address' }),
-            nativeToScVal(title, { type: 'string' }),
-            nativeToScVal(description, { type: 'string' }),
-          ),
-        )
-        .setTimeout(30)
-        .build();
-      return tx.toXDR();
-    } catch (err: unknown) {
-      throw this.mapError(err);
-    }
+    const { creator, goal, token, title, description } = params;
+    return this.buildTransaction(
+      creator,
+      this.contract.call(
+        'create_pool',
+        nativeToScVal(creator, { type: 'address' }),
+        nativeToScVal(BigInt(goal), { type: 'i128' }),
+        nativeToScVal(token, { type: 'address' }),
+        nativeToScVal(title, { type: 'string' }),
+        nativeToScVal(description, { type: 'string' }),
+      ),
+    );
   }
 
   buildDonateTransaction(
@@ -77,25 +66,14 @@ export class ContractService {
     poolId: number,
     amount: string,
   ): string {
-    try {
-      const source = new Account(sourcePublicKey, '0');
-      const tx = new TransactionBuilder(source, {
-        fee: BASE_FEE,
-        networkPassphrase: NETWORK_PASSPHRASE,
-      })
-        .addOperation(
-          this.contract.call(
-            'donate',
-            nativeToScVal(poolId, { type: 'u32' }),
-            nativeToScVal(BigInt(amount), { type: 'i128' }),
-          ),
-        )
-        .setTimeout(30)
-        .build();
-      return tx.toXDR();
-    } catch (err: unknown) {
-      throw this.mapError(err);
-    }
+    return this.buildTransaction(
+      sourcePublicKey,
+      this.contract.call(
+        'donate',
+        nativeToScVal(poolId, { type: 'u32' }),
+        nativeToScVal(BigInt(amount), { type: 'i128' }),
+      ),
+    );
   }
 
   buildWithdrawTransaction(
@@ -103,19 +81,41 @@ export class ContractService {
     poolId: number,
     tokenAddress: string,
   ): string {
+    return this.buildTransaction(
+      sourcePublicKey,
+      this.contract.call(
+        'withdraw',
+        nativeToScVal(poolId, { type: 'u32' }),
+        nativeToScVal(tokenAddress, { type: 'address' }),
+      ),
+    );
+  }
+
+  buildClosePoolTransaction(
+    sourcePublicKey: string,
+    poolId: number,
+  ): string {
+    return this.buildTransaction(
+      sourcePublicKey,
+      this.contract.call(
+        'close_pool',
+        nativeToScVal(poolId, { type: 'u32' }),
+        nativeToScVal(sourcePublicKey, { type: 'address' }),
+      ),
+    );
+  }
+
+  private buildTransaction(
+    sourcePublicKey: string,
+    operation: xdr.Operation,
+  ): string {
     try {
       const source = new Account(sourcePublicKey, '0');
       const tx = new TransactionBuilder(source, {
         fee: BASE_FEE,
         networkPassphrase: NETWORK_PASSPHRASE,
       })
-        .addOperation(
-          this.contract.call(
-            'withdraw',
-            nativeToScVal(poolId, { type: 'u32' }),
-            nativeToScVal(tokenAddress, { type: 'address' }),
-          ),
-        )
+        .addOperation(operation)
         .setTimeout(30)
         .build();
       return tx.toXDR();
@@ -170,7 +170,11 @@ export class ContractService {
         );
       }
       return 0n;
-    } catch {
+    } catch (err: unknown) {
+      this.logger.error(
+        `Failed to fetch contribution on-chain for poolId ${poolId}, donor ${donor}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       return 0n;
     }
   }
@@ -217,7 +221,11 @@ export class ContractService {
         };
       }
       return null;
-    } catch {
+    } catch (err: unknown) {
+      this.logger.error(
+        `Failed to fetch pool on-chain for poolId ${poolId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       return null;
     }
   }
@@ -249,7 +257,11 @@ export class ContractService {
 
       const native = scValToNative(retVal);
       return typeof native === 'bigint' ? native : BigInt(String(native));
-    } catch {
+    } catch (err: unknown) {
+      this.logger.error(
+        `Failed to fetch total raised on-chain for poolId ${poolId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       return 0n;
     }
   }
@@ -280,7 +292,11 @@ export class ContractService {
       if (!retVal) return 0;
 
       return Number(scValToNative(retVal));
-    } catch {
+    } catch (err: unknown) {
+      this.logger.error(
+        `Failed to fetch donor count on-chain for poolId ${poolId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       return 0;
     }
   }
@@ -291,6 +307,9 @@ export class ContractService {
     if (msg.includes('tx_bad_auth')) return new StellarError('tx_bad_auth');
     if (msg.includes('op_underfunded'))
       return new StellarError('op_underfunded');
+    if (msg.includes('op_no_source_account'))
+      return new StellarError('op_no_source_account');
+    if (msg.includes('timeout')) return new StellarError('timeout');
     return new StellarError(msg);
   }
 }

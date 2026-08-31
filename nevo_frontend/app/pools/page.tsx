@@ -3,12 +3,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { EmptyState } from '@/components/EmptyState';
-import { Pagination, PoolCard, Skeleton } from '@/components';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { BackToTopButton, Pagination, PoolCard, Skeleton } from '@/components';
 import {
   usePoolsStore,
   type Pool,
   type PoolStatus,
 } from '@/src/store/poolsStore';
+import { getDonorCount } from '@/lib/getDonorCount';
 
 type SortOption = 'newest' | 'most-funded' | 'close-to-goal' | 'trending';
 
@@ -83,13 +85,6 @@ const CATEGORY_STYLES: Record<string, { inactive: string; active: string }> = {
     active: 'border-fuchsia-500 bg-fuchsia-100 text-fuchsia-800',
   },
 };
-
-function getDonorCount(pool: Pool): number {
-  if (pool.id === '1') return 42;
-  if (pool.id === '2') return 87;
-  if (pool.id === '3') return 31;
-  return Math.floor((pool.raised * 7.3) / 100) + 1;
-}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -267,9 +262,8 @@ function buildDefaultFilters(pools: Pool[]): FilterState {
   };
 }
 
-export default function BrowsePoolsPage() {
+function BrowsePoolsPageContent() {
   const { pools, loading, error, fetchPools } = usePoolsStore();
-  const hasFetched = useRef(false);
   useEffect(() => {
     fetchPools();
   }, [fetchPools]);
@@ -283,19 +277,6 @@ export default function BrowsePoolsPage() {
   const hasHydrated = useRef(false);
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [searchInput, setSearchInput] = useState(defaultFilters.search);
-
-  useEffect(() => {
-    if (hasFetched.current) {
-      fetchPools(
-        filters as unknown as Record<
-          string,
-          string | number | boolean | undefined
-        >
-      );
-    } else {
-      hasFetched.current = true;
-    }
-  }, [filters, fetchPools]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -696,18 +677,34 @@ export default function BrowsePoolsPage() {
               variant="bordered"
               icon="search"
               iconTone="muted"
-              title="No results found"
-              description="No pools match the current filter combination."
-              action={{
-                label: 'Clear all filters',
-                onClick: clearAllFilters,
-                variant: 'primary',
-              }}
-              secondaryAction={{
-                label: 'Create a Pool',
-                href: '/pools/new',
-                variant: 'link',
-              }}
+              title="No pools found"
+              description={
+                activeFilters.length > 0
+                  ? 'No pools match the current filter combination.'
+                  : 'There are no donation pools yet. Be the first to create one.'
+              }
+              action={
+                activeFilters.length > 0
+                  ? {
+                      label: 'Clear filters',
+                      onClick: clearAllFilters,
+                      variant: 'primary',
+                    }
+                  : {
+                      label: 'Create a Pool',
+                      href: '/pools/new',
+                      variant: 'primary',
+                    }
+              }
+              secondaryAction={
+                activeFilters.length > 0
+                  ? {
+                      label: 'Create a Pool',
+                      href: '/pools/new',
+                      variant: 'link',
+                    }
+                  : undefined
+              }
             />
           ) : (
             <div className="space-y-8">
@@ -737,6 +734,17 @@ export default function BrowsePoolsPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function BrowsePoolsPage() {
+  return (
+    <>
+      <ErrorBoundary>
+        <BrowsePoolsPageContent />
+      </ErrorBoundary>
+      <BackToTopButton />
+    </>
   );
 }
 
