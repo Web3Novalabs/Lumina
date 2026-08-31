@@ -63,6 +63,133 @@ fn test_donate() {
 }
 
 #[test]
+fn test_donate_with_configured_token_transfers_and_accounts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let token = create_token(&env, 100, &donor);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Token Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000u128,
+        &100_000u64,
+    );
+    client.set_pool_token(&pool_id, &token);
+
+    client.donate_with_token(&pool_id, &donor, &token, &40i128);
+
+    assert_eq!(token::Client::new(&env, &token).balance(&donor), 60);
+    assert_eq!(token::Client::new(&env, &token).balance(&contract_id), 40);
+    assert_eq!(client.get_pool(&pool_id).3, 40u128);
+}
+
+#[test]
+#[should_panic(expected = "TokenTransferFailed")]
+fn test_donate_with_wrong_token_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let accepted_token = create_token(&env, 100, &donor);
+    let wrong_token = create_token(&env, 100, &donor);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Token Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000u128,
+        &100_000u64,
+    );
+    client.set_pool_token(&pool_id, &accepted_token);
+
+    client.donate_with_token(&pool_id, &donor, &wrong_token, &40i128);
+}
+
+#[test]
+#[should_panic]
+fn test_donate_with_invalid_token_address_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Token Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000u128,
+        &100_000u64,
+    );
+
+    client.donate_with_token(&pool_id, &donor, &Address::generate(&env), &40i128);
+}
+
+#[test]
+fn test_save_pool_metadata_accepts_limits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Metadata Pool"),
+        &String::from_str(&env, "Initial"),
+        &1_000u128,
+        &100_000u64,
+    );
+    let description = String::from_str(&env, &"d".repeat(MAX_DESCRIPTION_LENGTH));
+    let url = String::from_str(&env, &"u".repeat(MAX_URL_LENGTH));
+    let image_hash = String::from_str(&env, &"h".repeat(MAX_IMAGE_HASH_LENGTH));
+
+    client.save_pool(&pool_id, &description, &url, &image_hash);
+
+    assert_eq!(client.get_saved_pool_metadata(&pool_id), (description, url, image_hash));
+}
+
+#[test]
+#[should_panic(expected = "Description exceeds maximum length")]
+fn test_save_pool_rejects_long_description() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(&creator, &String::from_str(&env, "Pool"), &String::from_str(&env, "Test"), &1_000, &100_000);
+    client.save_pool(&pool_id, &String::from_str(&env, &"d".repeat(MAX_DESCRIPTION_LENGTH + 1)), &String::from_str(&env, "url"), &String::from_str(&env, "hash"));
+}
+
+#[test]
+#[should_panic(expected = "URL exceeds maximum length")]
+fn test_save_pool_rejects_long_url() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(&creator, &String::from_str(&env, "Pool"), &String::from_str(&env, "Test"), &1_000, &100_000);
+    client.save_pool(&pool_id, &String::from_str(&env, "description"), &String::from_str(&env, &"u".repeat(MAX_URL_LENGTH + 1)), &String::from_str(&env, "hash"));
+}
+
+#[test]
+#[should_panic(expected = "Image hash exceeds maximum length")]
+fn test_save_pool_rejects_long_image_hash() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(&creator, &String::from_str(&env, "Pool"), &String::from_str(&env, "Test"), &1_000, &100_000);
+    client.save_pool(&pool_id, &String::from_str(&env, "description"), &String::from_str(&env, "url"), &String::from_str(&env, &"h".repeat(MAX_IMAGE_HASH_LENGTH + 1)));
+}
+
+#[test]
 fn test_multiple_donations() {
     let env = Env::default();
     let contract_id = env.register(Contract, ());
