@@ -10,25 +10,12 @@ import { WalletAddress } from '@/components/WalletAddress';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { toast } from '@/components/Toast';
 import type { Pool } from '@/src/store/poolsStore';
-
-// TODO: replace with real imports once backend endpoints are implemented
-const apiClient = {
-  get: async <T,>(_: string): Promise<T> => {
-    throw new Error('not implemented');
-  },
-};
-const withdrawPool = async (_: string) => {
-  throw new Error('not implemented');
-};
-const closePool = async (_: string) => {
-  throw new Error('not implemented');
-};
-const submitSignedXdr = async (_: string) => {
-  throw new Error('not implemented');
-};
-const archiveSelectedPools = () => {
-  /* TODO: implement */
-};
+import {
+  apiClient,
+  submitSignedXdr,
+  withdrawPool,
+  closePool,
+} from '@/lib/api-client';
 
 // TODO: Replace with real API call once backend pool endpoints are implemented
 const MOCK_CREATOR_POOLS: Pool[] = [
@@ -154,6 +141,45 @@ function DashboardPageContent() {
     });
   }
 
+  // ── Bulk archive function ──────────────────────────────────────────────
+  async function archiveSelectedPools() {
+    if (selectedIds.size === 0) return;
+
+    const confirmed = window.confirm(
+      `Archive ${selectedIds.size} selected pool${selectedIds.size > 1 ? 's' : ''}? This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setConfirming(true);
+    try {
+      const poolIds = Array.from(selectedIds);
+      for (const poolId of poolIds) {
+        const { unsignedXdr } = await closePool(poolId);
+        const signedResult = await signTransaction(unsignedXdr, {
+          networkPassphrase:
+            process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+            'Test SDF Network ; September 2015',
+        });
+
+        if (signedResult.error) {
+          throw new Error(signedResult.error);
+        }
+
+        await submitSignedXdr(signedResult.signedTxXdr);
+      }
+
+      toast(`Successfully archived ${poolIds.length} pool${poolIds.length > 1 ? 's' : ''}`);
+      setSelectedIds(new Set());
+      await loadPools();
+    } catch (err: unknown) {
+      const error = err as Error;
+      toast(error.message || 'Failed to archive pools', 'error');
+      console.error(error);
+    } finally {
+      setConfirming(false);
+    }
+  }
+
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
       {/* ── Page header ─────────────────────────────────────────────────── */}
@@ -218,11 +244,12 @@ function DashboardPageContent() {
             Clear
           </button>
           <button
-            className="rounded-lg border border-[var(--color-border)] px-3 py-1 hover:bg-[var(--color-border)] transition-colors"
-            aria-label="Archive selected pools"
             onClick={archiveSelectedPools}
+            disabled={confirming}
+            className="rounded-lg border border-[var(--color-border)] px-3 py-1 hover:bg-[var(--color-border)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Archive selected pools"
           >
-            Archive selected
+            {confirming ? 'Archiving...' : 'Archive selected'}
           </button>
         </div>
       )}
@@ -287,9 +314,13 @@ function DashboardPageContent() {
       {actionModal && (
         <ConfirmModal
           modal={actionModal}
-          onClose={() => setActionModal(null)}
+          onClose={() => {
+            setActionModal(null);
+            setConfirming(false);
+          }}
           onConfirm={async () => {
             if (!actionModal) return;
+            setConfirming(true);
 
             try {
               if (actionModal.type === 'withdraw') {
@@ -326,10 +357,12 @@ function DashboardPageContent() {
               toast(error.message || 'Failed to complete action', 'error');
               console.error(error);
             } finally {
+              setConfirming(false);
               setActionModal(null);
               void loadPools();
             }
           }}
+          confirming={confirming}
         />
       )}
     </main>

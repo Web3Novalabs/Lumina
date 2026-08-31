@@ -1,6 +1,12 @@
+import { HttpStatus } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { TransactionBuilder, Networks, Keypair } from '@stellar/stellar-sdk';
+import {
+  TransactionBuilder,
+  Networks,
+  Keypair,
+  nativeToScVal,
+} from '@stellar/stellar-sdk';
 import { ContractService } from './contract.service.js';
 import { StellarError } from './stellar.error.js';
 
@@ -77,6 +83,19 @@ describe('ContractService', () => {
     });
   });
 
+  describe('buildTransaction', () => {
+    it('builds a valid transaction from a contract operation', () => {
+      const operation = service['contract'].call(
+        'close_pool',
+        nativeToScVal(1, { type: 'u32' }),
+        nativeToScVal(SOURCE, { type: 'address' }),
+      );
+
+      const xdr = service['buildTransaction'](SOURCE, operation);
+      expect(() => TransactionBuilder.fromXDR(xdr, NETWORK)).not.toThrow();
+    });
+  });
+
   describe('submitSignedXdr', () => {
     it('throws StellarError when given invalid XDR', async () => {
       await expect(
@@ -139,6 +158,31 @@ describe('ContractService', () => {
       const stellarError = service['mapError'](error);
       expect(stellarError).toBeInstanceOf(StellarError);
       expect(stellarError.message).toBe('Insufficient balance');
+    });
+
+    it('maps op_no_source_account to NOT_FOUND', () => {
+      const error = new Error('op_no_source_account');
+      const stellarError = service['mapError'](error);
+      expect(stellarError).toBeInstanceOf(StellarError);
+      expect(stellarError.getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(stellarError.message).toBe(
+        'Source account does not exist on the network',
+      );
+    });
+
+    it('maps timeout to REQUEST_TIMEOUT', () => {
+      const error = new Error('timeout');
+      const stellarError = service['mapError'](error);
+      expect(stellarError).toBeInstanceOf(StellarError);
+      expect(stellarError.getStatus()).toBe(HttpStatus.REQUEST_TIMEOUT);
+    });
+
+    it('falls back to INTERNAL_SERVER_ERROR for unrecognized messages', () => {
+      const error = new Error('some unrecognized stellar failure');
+      const stellarError = service['mapError'](error);
+      expect(stellarError).toBeInstanceOf(StellarError);
+      expect(stellarError.getStatus()).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+      expect(stellarError.message).toBe('some unrecognized stellar failure');
     });
   });
 });
