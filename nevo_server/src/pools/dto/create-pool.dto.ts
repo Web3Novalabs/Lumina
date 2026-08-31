@@ -45,6 +45,7 @@ export class CreatePoolDto {
 
   @ApiPropertyOptional({
     description: 'Category of the pool (e.g., Education, Healthcare, etc.)',
+    maxLength: 100,
   })
   @IsOptional()
   @IsString()

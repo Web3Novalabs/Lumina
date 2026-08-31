@@ -615,4 +615,50 @@ describe('PoolsService', () => {
       expect(result).toBeNull();
     });
   });
+
+  // ── incrementRaised ───────────────────────────────────────────────────────
+
+  describe('incrementRaised', () => {
+    it('adds amount to an existing non-zero raised value', async () => {
+      const existing = makePool({ raised: '1000' });
+      const { service, savedArg } = await buildService(existing);
+
+      const result = await service.incrementRaised('1', '500');
+
+      expect(savedArg().raised).toBe('1500');
+      expect(result?.raised).toBe('1500');
+    });
+
+    it('adds amount when raised is "0"', async () => {
+      const existing = makePool({ raised: '0' });
+      const { service, savedArg } = await buildService(existing);
+
+      const result = await service.incrementRaised('1', '250');
+
+      expect(savedArg().raised).toBe('250');
+      expect(result?.raised).toBe('250');
+    });
+
+    it('handles pool with empty or missing raised string by defaulting to "0"', async () => {
+      const existing = makePool({ raised: '' });
+      const { service, savedArg } = await buildService(existing);
+
+      const result = await service.incrementRaised('1', '100');
+
+      expect(savedArg().raised).toBe('100');
+      expect(result?.raised).toBe('100');
+    });
+
+    it('returns null when the pool is not found', async () => {
+      const { service, repo } = await buildService(null);
+
+      const result = await service.incrementRaised('nonexistent', '100');
+
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { contractPoolId: 'nonexistent' },
+      });
+      expect(result).toBeNull();
+    });
+  });
 });
+
