@@ -53,6 +53,10 @@ const UNCLAIMED_FEES: &str = "unclaimed_fees";
 // Creation fee key - stores the fee charged when creating a new pool
 const CREATION_FEE_KEY: &str = "creation_fee";
 
+// Crowdfunding token key - stores the canonical token every pool operation
+// must denominate in. When unset, any token is accepted (legacy behaviour).
+const CROWDFUNDING_TOKEN_KEY: &str = "cf_token";
+
 // Refund deadline constants
 // Donors may request a refund only after the pool deadline has passed AND
 // the grace period (REFUND_GRACE_PERIOD_LEDGERS) has elapsed.
@@ -84,6 +88,8 @@ const POOL_STATE_SET: Symbol = symbol_short!("pool_stat");
 const ADMIN_SET: Symbol = symbol_short!("admin_set");
 // Issue #954: shared constant replacing inline Symbol::new(&env, "creation_fee_updated")
 const FEE_UPDATED: Symbol = symbol_short!("fee_upd");
+// Issue #1064: emitted when the canonical crowdfunding token is configured.
+const TOKEN_UPDATED: Symbol = symbol_short!("tkn_upd");
 
 // ─── Typed Error Enum (Issue #955) ───────────────────────────────────────
 
@@ -123,6 +129,8 @@ pub enum ContractError {
     NoContributionToRefund = 13,
     /// School address has not been registered by an admin.
     SchoolNotRegistered = 14,
+    /// Token does not match the configured crowdfunding token.
+    InvalidToken = 15,
 }
 
 // Helper functions for timestamp/deadline edge-case tests
@@ -873,6 +881,9 @@ impl Contract {
     /// - `"Insolvency: locked funds exceed collected"` if locked > collected
     /// - `"No surplus to withdraw"` if surplus == 0
     pub fn withdraw_unallocated_funds(env: Env, pool_id: u32, token_address: Address) {
+        // Issue #1064: enforce the configured crowdfunding token.
+        Self::require_crowdfunding_token(&env, &token_address);
+
         let mut pool: Pool = env
             .storage()
             .persistent()
@@ -979,6 +990,9 @@ impl Contract {
     ) {
         student.require_auth();
 
+        // Issue #1064: enforce the configured crowdfunding token.
+        Self::require_crowdfunding_token(&env, &token_address);
+
         if claim_amount <= 0 {
             panic!("Claim amount must be positive");
         }
@@ -1074,6 +1088,9 @@ impl Contract {
     pub fn claim_protocol_fees(env: Env, admin: Address, token_address: Address) -> i128 {
         admin.require_auth();
 
+        // Issue #1064: enforce the configured crowdfunding token.
+        Self::require_crowdfunding_token(&env, &token_address);
+
         // Verify caller is the protocol admin
         let admin_key = Symbol::new(&env, ADMIN_KEY);
         let stored_admin: Address = env
@@ -1162,6 +1179,70 @@ impl Contract {
         );
     }
 
+    // ─── Crowdfunding Token (Issue #1064) ─────────────────────────────────────
+
+    /// Set the canonical crowdfunding token for the contract.
+    ///
+    /// Only the stored admin may call this. Once set, every token-denominated
+    /// operation (donations, claims, refunds, surplus withdrawals, fee claims
+    /// and emergency withdrawals) must use this exact token; a mismatch is
+    /// rejected with [`ContractError::InvalidToken`]. This prevents a pool from
+    /// being funded in one asset and drawn down in another, since `collected`
+    /// carries no denomination of its own.
+    ///
+    /// The address is probed as a token contract before being stored, so a
+    /// non-token address is rejected rather than silently accepted.
+    ///
+    /// Emits a `TOKEN_UPDATED` event on success.
+    ///
+    /// # Panics
+    /// - `ContractError::AdminNotSet` if no admin has been configured
+    /// - `ContractError::UnauthorizedAdmin` if `admin` is not the stored admin
+    pub fn set_crowdfunding_token(env: Env, admin: Address, token: Address) {
+        admin.require_auth();
+
+        let admin_key = Symbol::new(&env, ADMIN_KEY);
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<_, Address>(&admin_key)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
+        if stored_admin != admin {
+            env.panic_with_error(ContractError::UnauthorizedAdmin);
+        }
+
+        // Probe the address as a token contract. A non-token address traps
+        // here instead of being stored as an unusable configuration.
+        let _ = token::Client::new(&env, &token).decimals();
+
+        let token_key = Symbol::new(&env, CROWDFUNDING_TOKEN_KEY);
+        env.storage().persistent().set(&token_key, &token);
+
+        env.events().publish((TOKEN_UPDATED,), token);
+    }
+
+    /// Get the configured crowdfunding token.
+    ///
+    /// Returns `None` when no token has been configured, in which case any
+    /// token is accepted by token-denominated operations.
+    pub fn get_crowdfunding_token(env: Env) -> Option<Address> {
+        let token_key = Symbol::new(&env, CROWDFUNDING_TOKEN_KEY);
+        env.storage().persistent().get::<_, Address>(&token_key)
+    }
+
+    /// Reject `token_address` if a crowdfunding token is configured and differs.
+    ///
+    /// No-op when no crowdfunding token has been set, so contracts deployed
+    /// before this setting existed keep working unchanged.
+    fn require_crowdfunding_token(env: &Env, token_address: &Address) {
+        let token_key = Symbol::new(env, CROWDFUNDING_TOKEN_KEY);
+        if let Some(expected) = env.storage().persistent().get::<_, Address>(&token_key) {
+            if expected != *token_address {
+                env.panic_with_error(ContractError::InvalidToken);
+            }
+        }
+    }
+
     /// Get the current pool creation fee.
     /// Returns `0` if no fee has been set.
     pub fn get_creation_fee(env: Env) -> i128 {
@@ -1231,6 +1312,9 @@ impl Contract {
     pub fn refund_donation(env: Env, pool_id: u32, donor: Address, token_address: Address) {
         donor.require_auth();
 
+        // Issue #1064: enforce the configured crowdfunding token.
+        Self::require_crowdfunding_token(&env, &token_address);
+
         let mut pool: Pool = env
             .storage()
             .persistent()
@@ -1293,6 +1377,9 @@ impl Contract {
         amount: i128,
     ) {
         donor.require_auth();
+
+        // Issue #1064: enforce the configured crowdfunding token.
+        Self::require_crowdfunding_token(&env, &token_address);
 
         let pool: Pool = env
             .storage()
@@ -1398,6 +1485,9 @@ impl Contract {
         amount: i128,
     ) {
         admin.require_auth();
+
+        // Issue #1064: enforce the configured crowdfunding token.
+        Self::require_crowdfunding_token(&env, &token_address);
 
         let admin_key = Symbol::new(&env, ADMIN_KEY);
         let stored_admin: Address = env
