@@ -1,5 +1,5 @@
 import {
-  Body,
+  Body, ValidationPipe,
   Controller,
   ForbiddenException,
   Get,
@@ -11,7 +11,7 @@ import {
   Query,
   Req,
   UseGuards,
-  ValidationPipe,
+
 } from '@nestjs/common';
 import {
   ApiBearerAuth,

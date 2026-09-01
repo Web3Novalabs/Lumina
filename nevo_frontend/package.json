@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build --webpack",
+    "build": "$env:NEXT_DISABLE_SWC='1'; next build --webpack",
     "start": "next start",
     "test": "jest",
     "lint": "eslint",
@@ -29,7 +29,7 @@
     "i18next": "^23.0.1",
     "i18next-browser-languagedetector": "^7.0.1",
     "lucide-react": "^1.17.0",
-    "next": "16.2.4",
+    "next": "^15.0.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-i18next": "^12.3.1",
