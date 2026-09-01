@@ -293,6 +293,12 @@ impl Contract {
     // ─── Pool Management ─────────────────────────────────────────────────────
 
     /// Create a new donation / sponsorship pool.
+    ///
+    /// # Authorization
+    /// This function does **not** require the `creator` address to authorize the
+    /// call (`creator.require_auth()` is never called). Any address can create
+    /// a pool "as" any other address. For authorization, use
+    /// [`create_pool_for_school`] which validates that the caller is authorized.
     pub fn create_pool(
         env: Env,
         creator: Address,
