@@ -61,7 +61,7 @@
     "eslint-plugin-prettier": "^5.2.2",
     "globals": "^17.0.0",
     "jest": "^30.0.0",
-    "prettier": "^3.4.2",
+    "prettier": "^3.9.6",
     "source-map-support": "^0.5.21",
     "sql.js": "^1.14.1",
     "supertest": "^7.0.0",
